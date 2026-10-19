@@ -1,5 +1,7 @@
+import Image from "next/image";
+
 export function Logo({ className = "logo" }: { className?: string }) {
-  return <img src="/embee-logo.webp" alt="Embee" className={className} width={593} height={231} />;
+  return <Image src="/embee-logo.webp" alt="Embee" className={className} width={593} height={231} />;
 }
 
 export function BrandLoader({ label = "Loading" }: { label?: string }) {

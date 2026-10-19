@@ -6,6 +6,7 @@ import { PortalError } from "@/lib/form";
 import { ALL_PERMISSIONS, type PermissionKey } from "@/lib/permissions";
 import { nextInvoiceStatus, resolveBillRate } from "@/lib/metrics";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   Client,
   DirectoryUser,
@@ -22,7 +23,12 @@ import type {
   Workspace,
 } from "@/lib/types";
 
-type Row = Record<string, any>;
+type Row = Record<string, unknown>;
+
+function oneOf<T extends string>(value: unknown, options: readonly T[], fallback: T): T {
+  if (typeof value === "string" && (options as readonly string[]).includes(value)) return value as T;
+  return fallback;
+}
 
 function raise(error: { message: string; code?: string } | null) {
   if (!error) return;
@@ -73,9 +79,9 @@ async function ping(userId: string, title: string, body: string, href: string) {
 
 function mapRole(row: Row): Role {
   return {
-    id: row.id,
-    name: row.name,
-    slug: row.slug,
+    id: text(row.id),
+    name: text(row.name),
+    slug: text(row.slug),
     description: text(row.description),
     isSystem: Boolean(row.is_system),
     locked: Boolean(row.locked),
@@ -84,7 +90,7 @@ function mapRole(row: Row): Role {
 
 function mapClient(row: Row): Client {
   return {
-    id: row.id,
+    id: text(row.id),
     name: text(row.name),
     company: text(row.company),
     email: text(row.email),
@@ -93,20 +99,20 @@ function mapClient(row: Row): Client {
     address: text(row.address),
     taxId: text(row.tax_id),
     currency: text(row.currency) || "INR",
-    status: row.status,
+    status: oneOf(row.status, ["active", "inactive"] as const, "active"),
     notes: text(row.notes),
   };
 }
 
 function mapProject(row: Row): Project {
   return {
-    id: row.id,
+    id: text(row.id),
     clientId: text(row.client_id),
     name: text(row.name),
     code: text(row.code),
     description: text(row.description),
-    status: row.status,
-    billingModel: row.billing_model,
+    status: oneOf(row.status, ["planning", "active", "on_hold", "completed"] as const, "planning"),
+    billingModel: oneOf(row.billing_model, ["hourly", "fixed", "retainer"] as const, "hourly"),
     startDate: text(row.start_date),
     endDate: text(row.end_date),
     budgetAmount: num(row.budget_amount),
@@ -118,12 +124,12 @@ function mapProject(row: Row): Project {
 function mapMilestone(row: Row): Milestone {
   const packed = unpackHours(text(row.description));
   return {
-    id: row.id,
+    id: text(row.id),
     projectId: text(row.project_id),
     name: text(row.name),
     description: packed.description,
     dueDate: text(row.due_date),
-    status: row.status,
+    status: oneOf(row.status, ["pending", "in_progress", "completed", "missed"] as const, "pending"),
     amount: num(row.amount),
     plannedHours: row.planned_hours == null ? packed.hours : num(row.planned_hours) || packed.hours,
   };
@@ -131,29 +137,29 @@ function mapMilestone(row: Row): Milestone {
 
 function mapFeature(row: Row): Feature {
   return {
-    id: row.id,
+    id: text(row.id),
     projectId: text(row.project_id),
     name: text(row.name),
     description: text(row.description),
-    billingType: row.billing_type,
+    billingType: oneOf(row.billing_type, ["hourly", "fixed"] as const, "hourly"),
     hourlyRate: num(row.hourly_rate),
     fixedAmount: num(row.fixed_amount),
     budgetHours: num(row.budget_hours),
-    status: row.status,
+    status: oneOf(row.status, ["planned", "active", "done"] as const, "planned"),
   };
 }
 
 function mapTask(row: Row): Task {
   return {
-    id: row.id,
+    id: text(row.id),
     projectId: text(row.project_id),
     milestoneId: text(row.milestone_id),
     featureId: text(row.feature_id),
     title: text(row.title),
     description: text(row.description),
     assigneeId: text(row.assignee_id),
-    status: row.status,
-    priority: row.priority,
+    status: oneOf(row.status, ["backlog", "in_progress", "review", "done"] as const, "backlog"),
+    priority: oneOf(row.priority, ["low", "medium", "high", "urgent"] as const, "medium"),
     dueDate: text(row.due_date),
     estimatedHours: num(row.estimated_hours),
   };
@@ -161,7 +167,7 @@ function mapTask(row: Row): Task {
 
 function mapTime(row: Row): Timesheet {
   return {
-    id: row.id,
+    id: text(row.id),
     userId: text(row.user_id),
     projectId: text(row.project_id),
     taskId: text(row.task_id),
@@ -170,7 +176,7 @@ function mapTime(row: Row): Timesheet {
     hours: num(row.hours),
     billable: Boolean(row.billable),
     description: text(row.description),
-    status: row.status,
+    status: oneOf(row.status, ["draft", "submitted", "approved", "rejected"] as const, "draft"),
     approvedBy: text(row.approved_by),
     approvedAt: text(row.approved_at),
     rejectionNote: text(row.rejection_note),
@@ -180,9 +186,9 @@ function mapTime(row: Row): Timesheet {
 
 function mapRate(row: Row): RateCard {
   return {
-    id: row.id,
+    id: text(row.id),
     label: text(row.label),
-    scope: row.scope,
+    scope: oneOf(row.scope, ["company", "role", "user", "project", "feature"] as const, "company"),
     targetId: text(row.target_id),
     hourlyRate: num(row.hourly_rate),
     currency: text(row.currency) || "INR",
@@ -192,13 +198,13 @@ function mapRate(row: Row): RateCard {
 
 function mapInvoice(row: Row): Invoice {
   return {
-    id: row.id,
+    id: text(row.id),
     number: text(row.number),
     clientId: text(row.client_id),
     projectId: text(row.project_id),
     issueDate: text(row.issue_date),
     dueDate: text(row.due_date),
-    status: row.status,
+    status: oneOf(row.status, ["draft", "sent", "partial", "paid", "void"] as const, "draft"),
     taxRate: num(row.tax_rate),
     notes: text(row.notes),
     createdBy: text(row.created_by),
@@ -207,8 +213,8 @@ function mapInvoice(row: Row): Invoice {
 
 function mapPayment(row: Row): Payment {
   return {
-    id: row.id,
-    direction: row.direction,
+    id: text(row.id),
+    direction: oneOf(row.direction, ["incoming", "outgoing"] as const, "incoming"),
     clientId: text(row.client_id),
     userId: text(row.user_id),
     invoiceId: text(row.invoice_id),
@@ -216,7 +222,7 @@ function mapPayment(row: Row): Payment {
     amount: num(row.amount),
     currency: text(row.currency) || "INR",
     method: text(row.method),
-    status: row.status,
+    status: oneOf(row.status, ["draft", "initiated", "processing", "completed", "failed", "cancelled"] as const, "initiated"),
     reference: text(row.reference),
     notes: text(row.notes),
     createdBy: text(row.created_by),
@@ -402,7 +408,7 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
       createdAt: text(row.created_at),
     })),
     audit: rows(auditRes).map((row) => ({
-      id: row.id,
+      id: text(row.id),
       actorId: text(row.actor_id),
       action: text(row.action),
       entity: text(row.entity),
@@ -528,7 +534,7 @@ function milestonePayload(input: { projectId: string; name: string; description:
 
 async function writeMilestones(user: SessionUser, rows: Record<string, unknown> | Record<string, unknown>[], id = "") {
   const supabase = await client();
-  const write = (db: { from: (table: string) => any }, body: Record<string, unknown> | Record<string, unknown>[]) =>
+  const write = (db: SupabaseClient, body: Record<string, unknown> | Record<string, unknown>[]) =>
     id ? db.from("milestones").update(body).eq("id", id) : db.from("milestones").insert(body);
   let { error } = await write(supabase, rows);
   if (missingHoursColumn(error)) ({ error } = await write(supabase, Array.isArray(rows) ? rows.map(dropHours) : dropHours(rows)));

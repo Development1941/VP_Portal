@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { signOutAction } from "@/app/actions";
 import { initials } from "@/lib/format";
@@ -8,7 +9,7 @@ export function AccountMenu({ user, settings }: { user: SessionUser; settings: b
   return (
     <Menu className="account-menu">
       <summary className="avatar-btn" aria-label="Account menu">
-        {user.avatarUrl ? <img src={user.avatarUrl} alt="" /> : <span>{initials(user.fullName)}</span>}
+        {user.avatarUrl ? <Image src={user.avatarUrl} alt="" fill sizes="40px" /> : <span>{initials(user.fullName)}</span>}
       </summary>
       <div className="account-drop">
         <div className="account-id">

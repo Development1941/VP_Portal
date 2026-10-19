@@ -136,6 +136,7 @@ p { margin: 0; }
 .account-menu summary { list-style: none; }
 .account-menu summary::-webkit-details-marker { display: none; }
 .avatar-btn {
+  position: relative;
   width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; overflow: hidden;
   background: var(--clay); color: white; font-size: 13px; letter-spacing: 0.04em; cursor: pointer;
   border: 1px solid var(--line);

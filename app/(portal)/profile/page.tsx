@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { redirect } from "next/navigation";
 import { saveAvatarAction, saveProfileAction } from "@/app/actions";
 import { ActionForm, Submit } from "@/components/common/forms";
@@ -15,7 +16,7 @@ export default async function ProfilePage() {
       <section className="card profile-layout">
         <ActionForm action={saveAvatarAction} className="profile-photo">
           <div className="avatar-btn avatar-lg">
-            {user.avatarUrl ? <img src={user.avatarUrl} alt="" /> : <span>{initials(user.fullName)}</span>}
+            {user.avatarUrl ? <Image src={user.avatarUrl} alt="" fill sizes="96px" /> : <span>{initials(user.fullName)}</span>}
           </div>
           <label className="field">
             <span>Profile picture</span>
