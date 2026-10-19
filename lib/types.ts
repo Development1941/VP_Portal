@@ -253,6 +253,7 @@ export type AuditEntry = {
 };
 
 export type Workspace = {
+  currency: string;
   users: DirectoryUser[];
   roles: Role[];
   grants: { roleId: string; permission: PermissionKey }[];

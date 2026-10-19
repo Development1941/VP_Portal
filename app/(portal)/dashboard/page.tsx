@@ -32,14 +32,14 @@ export default async function DashboardPage() {
         <Stat label="My open tasks" value={String(myTasks.length)} note="Assigned to you" />
         <Stat label="My hours" value={hoursLabel(weekHours)} note="Logged this week" />
         {can(user, "timesheets.approve") ? <Stat label="Approvals" value={String(approvals.length)} note="Submitted and waiting" /> : <Stat label="Waiting on approval" value={String(waiting)} note={returned ? `${returned} returned` : "Submitted logs"} />}
-        {financial ? <Stat label="Pending dues" value={money(dueTotal)} note={`${openDues.length} open invoice${openDues.length === 1 ? "" : "s"}`} /> : <Stat label="Projects" value={String(data.projects.length)} note="Visible to your role" />}
+        {financial ? <Stat label="Pending dues" value={money(dueTotal, data.currency)} note={`${openDues.length} open invoice${openDues.length === 1 ? "" : "s"}`} /> : <Stat label="Projects" value={String(data.projects.length)} note="Visible to your role" />}
       </section>
       {can(user, "reports.financial") ? (
         <section className="stats">
           <Stat label="Billable this month" value={hoursLabel(monthBillable)} />
           <Stat label="Active projects" value={String(data.projects.filter((project) => project.status === "active").length)} />
-          <Stat label="Payouts in flight" value={money(payouts.reduce((sum, payment) => sum + payment.amount, 0))} note={`${payouts.length} not yet completed`} />
-          <Stat label="Unbilled work" value={money(data.projects.reduce((sum, project) => sum + projectEconomics(project, data).unbilled, 0))} note="Approved and not invoiced" />
+          <Stat label="Payouts in flight" value={money(payouts.reduce((sum, payment) => sum + payment.amount, 0), data.currency)} note={`${payouts.length} not yet completed`} />
+          <Stat label="Unbilled work" value={money(data.projects.reduce((sum, project) => sum + projectEconomics(project, data).unbilled, 0), data.currency)} note="Approved and not invoiced" />
         </section>
       ) : null}
       {user.roleSlug === "director" ? (
@@ -74,7 +74,7 @@ export default async function DashboardPage() {
             {openDues.slice(0, 4).map((row) => (
               <Link key={row.invoice.id} href={`/invoices/${row.invoice.id}`}>
                 <span>
-                  {row.invoice.number} · {money(row.amount)}
+                  {row.invoice.number} · {money(row.amount, data.currency)}
                 </span>
                 <Badge value={isOverdue(row.invoice.dueDate, row.amount) ? "overdue" : row.invoice.status} />
               </Link>

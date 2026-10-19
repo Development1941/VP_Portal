@@ -31,7 +31,7 @@ export default async function InvoicesPage() {
                     <td>{projectOf(data, invoice.projectId)?.name}</td>
                     <td>{prettyDate(invoice.dueDate)}</td>
                     <td><Badge value={invoice.status} /></td>
-                    <td className="num">{money(figures.total)}</td>
+                    <td className="num">{money(figures.total, data.currency)}</td>
                   </tr>
                 );
               })}

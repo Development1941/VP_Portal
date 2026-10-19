@@ -55,19 +55,19 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
                 <tr key={line.id}>
                   <td>{line.description}</td>
                   <td className="num">{line.hours || "—"}</td>
-                  <td className="num">{line.rate ? money(line.rate) : "—"}</td>
-                  <td className="num">{money(line.amount)}</td>
+                  <td className="num">{line.rate ? money(line.rate, data.currency) : "—"}</td>
+                  <td className="num">{money(line.amount, data.currency)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
         <div className="totals">
-          <div><span>Subtotal</span><strong>{money(figures.subtotal)}</strong></div>
-          <div><span>Tax {invoice.taxRate}%</span><strong>{money(figures.tax)}</strong></div>
-          <div><span>Total</span><strong>{money(figures.total)}</strong></div>
-          <div><span>Received</span><strong>{money(paid)}</strong></div>
-          <div><span>Balance</span><strong>{money(Math.max(0, figures.total - paid))}</strong></div>
+          <div><span>Subtotal</span><strong>{money(figures.subtotal, data.currency)}</strong></div>
+          <div><span>Tax {invoice.taxRate}%</span><strong>{money(figures.tax, data.currency)}</strong></div>
+          <div><span>Total</span><strong>{money(figures.total, data.currency)}</strong></div>
+          <div><span>Received</span><strong>{money(paid, data.currency)}</strong></div>
+          <div><span>Balance</span><strong>{money(Math.max(0, figures.total - paid), data.currency)}</strong></div>
         </div>
         {invoice.notes ? <p>{invoice.notes}</p> : null}
       </article>
@@ -77,7 +77,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           {receipts.map((payment) => (
             <div key={payment.id} className="quiet-row">
               <span>{payment.reference} · {payment.method}</span>
-              <span>{money(payment.amount)} <Badge value={payment.status} /></span>
+              <span>{money(payment.amount, data.currency)} <Badge value={payment.status} /></span>
             </div>
           ))}
         </section>

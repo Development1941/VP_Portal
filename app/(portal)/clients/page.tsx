@@ -45,7 +45,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
             <label className="field"><span>Phone</span><input name="phone" defaultValue={editing?.phone} /></label>
             <label className="field"><span>Billing email</span><input name="billingEmail" defaultValue={editing?.billingEmail} /></label>
             <label className="field"><span>Tax id</span><input name="taxId" defaultValue={editing?.taxId} /></label>
-            <label className="field"><span>Currency</span><input name="currency" defaultValue={editing?.currency || "INR"} /></label>
+            <label className="field"><span>Currency</span><input name="currency" defaultValue={data.currency} readOnly /></label>
             <label className="field">
               <span>Status</span>
               <select name="status" defaultValue={editing?.status || "active"}>

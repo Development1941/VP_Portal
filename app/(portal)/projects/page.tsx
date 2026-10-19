@@ -31,7 +31,7 @@ export default async function ProjectsPage() {
               <p>Owner {nameOf(data, project.ownerId)} · {prettyDate(project.startDate)} – {prettyDate(project.endDate)}</p>
               <Meter value={economics.budgetUsed} />
               <p className="muted">
-                Budget {money(project.budgetAmount, project.currency)} · recognized {money(economics.recognized, project.currency)}
+                Budget {money(project.budgetAmount, data.currency)} · recognized {money(economics.recognized, data.currency)}
               </p>
             </Link>
           );
@@ -100,7 +100,7 @@ export default async function ProjectsPage() {
             </label>
             <label className="field">
               <span>Currency</span>
-              <input name="currency" defaultValue="INR" />
+              <input name="currency" defaultValue={data.currency} readOnly />
             </label>
             <label className="field wide">
               <span>Description</span>

@@ -1,4 +1,5 @@
 import { can, canApproveProject, canEditDelivery, canEditTask, canManageProject, canSeeMilestones, canSeeTeamDsr, canUploadMilestones, leadsProject, projectLeads, projectVisible } from "@/lib/access";
+import { currencyCode, isCurrency } from "@/lib/currency";
 import { addDays, stamp, todayIso } from "@/lib/dates";
 import { prettyDate, roundMoney } from "@/lib/format";
 import { billingModelFor, keepDelivery, sowDefaults, statusForDelivery } from "@/lib/delivery";
@@ -352,7 +353,7 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
   const seePayments = can(user, "payments.view") || seeMoney;
   const seeAudit = can(user, "audit.view");
   const showCost = can(user, "team.manage") || can(user, "reports.financial") || can(user, "payments.manage") || can(user, "reports.project");
-  const [rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, costRes, escalationRes, fileRes, workstreamRes] =
+  const [rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, costRes, escalationRes, fileRes, workstreamRes, studioRes] =
     await Promise.all([
       supabase.from("roles").select("id, name, slug, description, is_system, locked").order("name"),
       seeGrants ? supabase.from("role_permissions").select("role_id, permission_key") : skipped(),
@@ -374,8 +375,9 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
       supabase.from("escalations").select("id, project_id, type, description, owner_name, due_date, status, created_by, created_at").order("created_at", { ascending: false }),
       supabase.from("project_files").select("id, project_id, kind, file_name, created_by, created_at").order("created_at", { ascending: false }),
       supabase.from("workstreams").select("id, name, owner_name, target_date, status").order("name"),
+      supabase.from("studio_settings").select("currency").eq("id", 1).maybeSingle(),
     ]);
-  for (const result of [rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, escalationRes, fileRes, workstreamRes]) {
+  for (const result of [rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, escalationRes, fileRes, workstreamRes, studioRes]) {
     raise(result.error);
   }
 
@@ -417,6 +419,7 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
   }
 
   return {
+    currency: currencyCode(text(studioRes.data?.currency)),
     users: directoryUsers(user, users, projects, members),
     roles: can(user, "settings.manage") || can(user, "team.manage") ? roles : roles.filter((role) => role.id === user.roleId),
     grants: can(user, "settings.manage")
@@ -475,6 +478,26 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
   };
 }
 
+async function studioCurrency() {
+  const supabase = await client();
+  const { data } = await supabase.from("studio_settings").select("currency").eq("id", 1).maybeSingle();
+  return currencyCode(text(data?.currency));
+}
+
+export async function saveStudioCurrency(user: SessionUser, currency: string) {
+  if (!can(user, "settings.manage")) throw new PortalError("You cannot change the studio currency.");
+  if (!isCurrency(currency)) throw new PortalError("Choose a supported currency.");
+  const admin = createServiceClient();
+  const supabase = admin ?? (await client());
+  const { error } = await supabase.from("studio_settings").update({ currency }).eq("id", 1);
+  raise(error);
+  for (const table of ["clients", "projects", "rates", "payments"] as const) {
+    const { error: updateError } = await supabase.from(table).update({ currency }).not("id", "is", null);
+    raise(updateError);
+  }
+  await trail(user, "studio.currency", "studio", currency, `Set the studio currency to ${currency}.`);
+}
+
 export async function saveClient(user: SessionUser, input: Client) {
   if (!can(user, "clients.manage")) throw new PortalError("You cannot edit clients.");
   if (!input.name || !input.company) throw new PortalError("Client name and company are required.");
@@ -487,7 +510,7 @@ export async function saveClient(user: SessionUser, input: Client) {
     billing_email: input.billingEmail,
     address: input.address,
     tax_id: input.taxId,
-    currency: input.currency || "INR",
+    currency: await studioCurrency(),
     status: input.status,
     notes: input.notes,
   };
@@ -521,7 +544,7 @@ export async function saveProject(user: SessionUser, input: Project) {
     start_date: uuid(saved.startDate),
     end_date: uuid(saved.endDate),
     budget_amount: saved.budgetAmount,
-    currency: saved.currency || "INR",
+    currency: await studioCurrency(),
     owner_id: saved.ownerId,
     estimated_hours: saved.estimatedHours,
     source: saved.source,
@@ -867,7 +890,7 @@ export async function saveRate(user: SessionUser, input: RateCard) {
     scope: input.scope,
     target_id: input.targetId,
     hourly_rate: input.hourlyRate,
-    currency: input.currency || "INR",
+    currency: await studioCurrency(),
     effective_from: uuid(input.effectiveFrom),
   };
   const query = input.id ? supabase.from("rates").update(payload).eq("id", input.id) : supabase.from("rates").insert(payload);
@@ -983,7 +1006,7 @@ export async function savePayment(user: SessionUser, input: Payment) {
       invoice_id: uuid(input.invoiceId),
       project_id: uuid(input.projectId),
       amount: input.amount,
-      currency: input.currency || "INR",
+      currency: await studioCurrency(),
       method: input.method,
       status: "initiated",
       reference: input.reference || `RCPT-${(count ?? 0) + 100}`,
@@ -1182,7 +1205,7 @@ async function ensureClient(user: SessionUser, name: string) {
   raise(error);
   const found = (data ?? []).find((row) => text(row.company).toLowerCase() === company.toLowerCase() || text(row.name).toLowerCase() === company.toLowerCase());
   if (found) return text(found.id);
-  const payload = { name: company, company, currency: "INR", status: "active" };
+  const payload = { name: company, company, currency: await studioCurrency(), status: "active" };
   let inserted = await supabase.from("clients").insert(payload).select("id").single();
   if (inserted.error) {
     const admin = createServiceClient();
@@ -1261,6 +1284,7 @@ export async function submitIntake(
       billing_model: "hourly",
       start_date: uuid(input.startDate),
       owner_id: ownerId,
+      currency: await studioCurrency(),
       estimated_hours: input.estimatedHours,
       source: input.source,
       sow_stage: defaults.sowStage,
@@ -1295,7 +1319,7 @@ export async function saveSow(user: SessionUser, input: Project) {
       client_id: input.clientId,
       description: input.description,
       budget_amount: input.budgetAmount,
-      currency: input.currency || existing.currency || "INR",
+      currency: await studioCurrency(),
       billing_terms: input.billingTerms,
       billing_model: billingModelFor(input.billingTerms),
       start_date: uuid(input.startDate),

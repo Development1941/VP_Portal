@@ -54,10 +54,10 @@ export default async function ReportsPage() {
                   <td className="num">{lateTasks(tasks).length}</td>
                   <td className="num">{hoursLabel(health.loggedHours)} / {hoursLabel(health.expectedHours)}</td>
                   <td className="num">{hoursLabel(economics.otherHours)}</td>
-                  <td className="num">{money(economics.recognized, project.currency)}</td>
-                  {financial ? <td className="num">{money(economics.cost, project.currency)}</td> : null}
-                  {financial ? <td className="num">{money(economics.profit, project.currency)}</td> : null}
-                  {financial ? <td className="num">{money(economics.due, project.currency)}</td> : null}
+                  <td className="num">{money(economics.recognized, data.currency)}</td>
+                  {financial ? <td className="num">{money(economics.cost, data.currency)}</td> : null}
+                  {financial ? <td className="num">{money(economics.profit, data.currency)}</td> : null}
+                  {financial ? <td className="num">{money(economics.due, data.currency)}</td> : null}
                 </tr>
               );
               })}
@@ -67,10 +67,10 @@ export default async function ReportsPage() {
       </section>
       {financial ? (
         <section className="stats">
-          <article className="stat"><span>Recognized</span><b>{money(rows.reduce((sum, row) => sum + row.economics.recognized, 0))}</b></article>
-          <article className="stat"><span>Internal cost</span><b>{money(rows.reduce((sum, row) => sum + row.economics.cost, 0))}</b></article>
-          <article className="stat"><span>Profit</span><b>{money(rows.reduce((sum, row) => sum + row.economics.profit, 0))}</b></article>
-          <article className="stat"><span>Open dues</span><b>{money(open.reduce((sum, row) => sum + row.amount, 0))}</b></article>
+          <article className="stat"><span>Recognized</span><b>{money(rows.reduce((sum, row) => sum + row.economics.recognized, 0), data.currency)}</b></article>
+          <article className="stat"><span>Internal cost</span><b>{money(rows.reduce((sum, row) => sum + row.economics.cost, 0), data.currency)}</b></article>
+          <article className="stat"><span>Profit</span><b>{money(rows.reduce((sum, row) => sum + row.economics.profit, 0), data.currency)}</b></article>
+          <article className="stat"><span>Open dues</span><b>{money(open.reduce((sum, row) => sum + row.amount, 0), data.currency)}</b></article>
         </section>
       ) : null}
     </>

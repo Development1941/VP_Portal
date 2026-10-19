@@ -353,5 +353,6 @@ export function buildSeed(): DemoStore {
     ],
     files: [],
     workstreams: defaultWorkstreams(),
+    currency: "INR",
   };
 }

@@ -1,8 +1,22 @@
+import { currencyCode } from "@/lib/currency";
+
+const LOCALES: Record<string, string> = {
+  INR: "en-IN",
+  USD: "en-US",
+  EUR: "en-IE",
+  GBP: "en-GB",
+  AED: "en-AE",
+  SGD: "en-SG",
+  AUD: "en-AU",
+  CAD: "en-CA",
+};
+
 export function money(value: number, currency = "INR") {
   const amount = Number.isFinite(value) ? value : 0;
-  return new Intl.NumberFormat("en-IN", {
+  const code = currencyCode(currency);
+  return new Intl.NumberFormat(LOCALES[code], {
     style: "currency",
-    currency,
+    currency: code,
     maximumFractionDigits: Number.isInteger(amount) ? 0 : 2,
   }).format(amount);
 }

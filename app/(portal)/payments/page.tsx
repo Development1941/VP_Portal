@@ -31,7 +31,7 @@ export default async function PaymentsPage({ searchParams }: { searchParams: Pro
                   <td><a href={`/invoices/${row.invoice.id}`}>{row.invoice.number}</a></td>
                   <td>{clientOf(data, row.invoice.clientId)?.company}</td>
                   <td>{prettyDate(row.invoice.dueDate)} {isOverdue(row.invoice.dueDate, row.amount) ? <Badge value="overdue" /> : null}</td>
-                  <td className="num">{money(row.amount)}</td>
+                  <td className="num">{money(row.amount, data.currency)}</td>
                 </tr>
               ))}
             </tbody>
@@ -78,7 +78,8 @@ export default async function PaymentsPage({ searchParams }: { searchParams: Pro
                 {data.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
               </select>
             </label>
-            <label className="field"><span>Amount</span><input type="number" name="amount" min="1" step="0.01" required /></label>
+            <label className="field"><span>Amount ({data.currency})</span><input type="number" name="amount" min="1" step="0.01" required /></label>
+            <input type="hidden" name="currency" value={data.currency} />
             <label className="field"><span>Method</span><input name="method" defaultValue="Bank transfer" /></label>
             <label className="field"><span>Reference</span><input name="reference" placeholder="Optional, generated if blank" /></label>
             <label className="field wide"><span>Notes</span><input name="notes" /></label>
@@ -108,7 +109,7 @@ function PaymentTable({
         {rows.map((payment) => (
           <div key={payment.id} className="quiet-row">
             <div>
-              <strong>{money(payment.amount, payment.currency)}</strong>
+              <strong>{money(payment.amount, data.currency)}</strong>
               <div className="muted">
                 {payment.reference} · {payment.direction === "incoming" ? clientOf(data, payment.clientId)?.company : nameOf(data, payment.userId)}
                 {payment.projectId ? ` · ${projectOf(data, payment.projectId)?.name}` : ""} · {prettyStamp(payment.createdAt)}

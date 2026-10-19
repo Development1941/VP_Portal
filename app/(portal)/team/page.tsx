@@ -29,7 +29,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
                   <td>{person.roleName}</td>
                   <td>{person.title}</td>
                   <td><Badge value={person.status} /></td>
-                  {showCost ? <td className="num">{person.hourlyCost ? money(person.hourlyCost) : "—"}</td> : null}
+                  {showCost ? <td className="num">{person.hourlyCost ? money(person.hourlyCost, data.currency) : "—"}</td> : null}
                   <td>{manage ? <a href={`?edit=${person.id}`}>Edit</a> : null}</td>
                 </tr>
               ))}
@@ -60,7 +60,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
                 <option value="inactive">Inactive</option>
               </select>
             </label>
-            <label className="field"><span>Internal hourly cost</span><input type="number" name="hourlyCost" min="0" defaultValue={editing?.hourlyCost ?? 0} /></label>
+            <label className="field"><span>Internal hourly cost ({data.currency})</span><input type="number" name="hourlyCost" min="0" defaultValue={editing?.hourlyCost ?? 0} /></label>
             <label className="field"><span>{editing ? "New password" : "Password"}</span><input type="password" name="password" placeholder={editing ? "Leave blank to keep" : "At least 6 characters"} autoComplete="new-password" /></label>
             <Submit>{editing ? "Save member" : "Add member"}</Submit>
           </ActionForm>

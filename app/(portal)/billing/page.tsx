@@ -30,7 +30,7 @@ export default async function BillingPage() {
               <p className="muted">{project?.name} · {feature.description}</p>
               <Meter value={progress} />
               <p>{hoursLabel(billable)} billable · {hoursLabel(hours - billable)} non-billable</p>
-              <strong>{feature.billingType === "fixed" ? money(feature.fixedAmount, project?.currency) : `${money(feature.hourlyRate, project?.currency)} / hour`}</strong>
+              <strong>{feature.billingType === "fixed" ? money(feature.fixedAmount, data.currency) : `${money(feature.hourlyRate, data.currency)} / hour`}</strong>
               <Link href={`/projects/${feature.projectId}`}>Open project</Link>
             </article>
           );
@@ -50,7 +50,7 @@ export default async function BillingPage() {
                     <td><Badge value={rate.scope} /></td>
                     <td>{rate.targetId || "Studio"}</td>
                     <td>{rate.effectiveFrom}</td>
-                    <td className="num">{money(rate.hourlyRate, rate.currency)}</td>
+                    <td className="num">{money(rate.hourlyRate, data.currency)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -70,7 +70,7 @@ export default async function BillingPage() {
             </label>
             <label className="field"><span>Target id</span><input name="targetId" placeholder="Leave blank for the studio default" /></label>
             <label className="field"><span>Hourly rate</span><input type="number" name="hourlyRate" min="0" required /></label>
-            <label className="field"><span>Currency</span><input name="currency" defaultValue="INR" /></label>
+            <label className="field"><span>Currency</span><input name="currency" defaultValue={data.currency} readOnly /></label>
             <label className="field"><span>Effective from</span><input type="date" name="effectiveFrom" defaultValue={todayIso()} /></label>
             <Submit>Save rate</Submit>
           </ActionForm>

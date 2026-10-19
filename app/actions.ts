@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { isCurrency } from "@/lib/currency";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/data";
 import { sowDefaults } from "@/lib/delivery";
@@ -53,6 +54,14 @@ export async function loginAction(_prev: FormState, form: FormData): Promise<For
     throw error;
   }
   redirect("/dashboard");
+}
+
+export async function saveStudioCurrencyAction(form: FormData) {
+  const user = await actor();
+  const currency = str(form, "currency");
+  if (!isCurrency(currency)) throw new PortalError("Choose a supported currency.");
+  await db().saveStudioCurrency(user, currency);
+  revalidatePath("/", "layout");
 }
 
 export async function saveProfileAction(_prev: FormState, form: FormData) {

@@ -59,8 +59,8 @@ export default async function SowAdminPage({ params }: { params: Promise<{ id: s
               </select>
             </label>
             <label className="field"><span>Renewal date</span><input type="date" name="renewalDate" defaultValue={project.renewalDate} disabled={!manage} /></label>
-            <label className="field"><span>Currency</span><input name="currency" defaultValue={project.currency || "INR"} disabled={!manage} /></label>
-            <p className="muted">Current value {money(project.budgetAmount, project.currency)}</p>
+            <label className="field"><span>Currency</span><input name="currency" defaultValue={data.currency} readOnly /></label>
+            <p className="muted">Current value {money(project.budgetAmount, data.currency)}</p>
             <label className="field wide"><span>Scope of work</span><textarea name="scope" defaultValue={project.scope} disabled={!manage} /></label>
             <label className="field wide"><span>Deliverables</span><textarea name="deliverables" defaultValue={project.deliverables} disabled={!manage} /></label>
             <label className="field wide"><span>Milestones</span><textarea name="description" defaultValue={project.description} disabled={!manage} /></label>

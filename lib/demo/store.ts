@@ -4,6 +4,7 @@ import { can, canApproveProject, canEditDelivery, canEditTask, canManageProject,
 import { billingModelFor, defaultWorkstreams, keepDelivery, sowDefaults, statusForDelivery } from "@/lib/delivery";
 import { ALL_PERMISSIONS, type PermissionKey } from "@/lib/permissions";
 import { addDays, stamp, todayIso } from "@/lib/dates";
+import { currencyCode, isCurrency } from "@/lib/currency";
 import { nid, prettyDate, roundMoney } from "@/lib/format";
 import { PortalError } from "@/lib/form";
 import { nextInvoiceStatus, resolveBillRate } from "@/lib/metrics";
@@ -46,7 +47,12 @@ function hydrate(store: DemoStore): DemoStore {
   store.escalations = store.escalations ?? [];
   store.files = store.files ?? [];
   store.workstreams = store.workstreams?.length ? store.workstreams : defaultWorkstreams();
+  store.currency = currencyCode(store.currency);
   return store;
+}
+
+function studioCurrency(store: DemoStore) {
+  return currencyCode(store.currency);
 }
 
 function write(store: DemoStore) {
@@ -156,6 +162,7 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
   const projects = store.projects.filter((project) => ids.has(project.id));
   const clientIds = new Set(projects.map((project) => project.clientId));
   return {
+    currency: studioCurrency(store),
     users: directory(store, user),
     roles: can(user, "settings.manage") || can(user, "team.manage") ? store.roles : store.roles.filter((role) => role.id === user.roleId),
     grants: can(user, "settings.manage") ? store.grants : [],
@@ -200,8 +207,9 @@ export function saveClient(user: SessionUser, input: Client) {
   if (!input.name || !input.company) throw new PortalError("Client name and company are required.");
   return mutate((store) => {
     const existing = store.clients.find((client) => client.id === input.id);
-    if (existing) Object.assign(existing, input);
-    else store.clients.unshift({ ...input, id: input.id || nid("cli") });
+    const saved = { ...input, currency: studioCurrency(store) };
+    if (existing) Object.assign(existing, saved);
+    else store.clients.unshift({ ...saved, id: input.id || nid("cli") });
     audit(store, user, "client.save", "client", input.id, `Saved client ${input.company}.`);
   });
 }
@@ -211,6 +219,7 @@ export function saveProject(user: SessionUser, input: Project) {
   if (!input.name || !input.clientId) throw new PortalError("Project name and client are required.");
   return mutate((store) => {
     if (!can(user, "projects.view_all")) input.ownerId = user.id;
+    input.currency = studioCurrency(store);
     const existing = store.projects.find((project) => project.id === input.id);
     if (existing) {
       if (!canManageProject(user, existing)) throw new PortalError("You can edit only projects you own.");
@@ -446,8 +455,9 @@ export function saveRate(user: SessionUser, input: RateCard) {
   if (!input.label || input.hourlyRate < 0) throw new PortalError("A rate needs a label and an amount.");
   return mutate((store) => {
     const existing = store.rates.find((rate) => rate.id === input.id);
-    if (existing) Object.assign(existing, input);
-    else store.rates.unshift({ ...input, id: nid("rate") });
+    const saved = { ...input, currency: studioCurrency(store) };
+    if (existing) Object.assign(existing, saved);
+    else store.rates.unshift({ ...saved, id: nid("rate") });
     audit(store, user, "rate.save", "rate", input.id, `Saved rate ${input.label}.`);
   });
 }
@@ -549,6 +559,7 @@ export function savePayment(user: SessionUser, input: Payment) {
   return mutate((store) => {
     const payment: Payment = {
       ...input,
+      currency: studioCurrency(store),
       id: nid("pay"),
       status: "initiated",
       reference: input.reference || `RCPT-${store.payments.length + 100}`,
@@ -561,6 +572,19 @@ export function savePayment(user: SessionUser, input: Payment) {
     const who = payment.direction === "incoming" ? "client receipt" : "team payout";
     notify(store, user.id, "Payment initiated", `${payment.reference} is an initiated ${who}.`, "/payments");
     audit(store, user, "payment.initiate", "payment", payment.id, `Initiated ${payment.reference} for ${payment.amount}.`);
+  });
+}
+
+export function saveStudioCurrency(user: SessionUser, currency: string) {
+  if (!can(user, "settings.manage")) throw new PortalError("You cannot change the studio currency.");
+  if (!isCurrency(currency)) throw new PortalError("Choose a supported currency.");
+  return mutate((store) => {
+    store.currency = currency;
+    for (const client of store.clients) client.currency = currency;
+    for (const project of store.projects) project.currency = currency;
+    for (const rate of store.rates) rate.currency = currency;
+    for (const payment of store.payments) payment.currency = currency;
+    audit(store, user, "studio.currency", "studio", currency, `Set the studio currency to ${currency}.`);
   });
 }
 
@@ -735,7 +759,7 @@ export async function submitIntake(
     if (!company) throw new PortalError("Client name is required.");
     let client = store.clients.find((item) => item.company.toLowerCase() === company.toLowerCase() || item.name.toLowerCase() === company.toLowerCase());
     if (!client) {
-      client = { id: nid("cli"), name: company, company, email: "", phone: "", billingEmail: "", address: "", taxId: "", currency: "INR", status: "active", notes: "" };
+      client = { id: nid("cli"), name: company, company, email: "", phone: "", billingEmail: "", address: "", taxId: "", currency: studioCurrency(store), status: "active", notes: "" };
       store.clients.unshift(client);
     }
     const ownerId = can(user, "projects.view_all") ? input.ownerId || user.id : user.id;
@@ -752,7 +776,7 @@ export async function submitIntake(
       startDate: input.startDate,
       endDate: "",
       budgetAmount: 0,
-      currency: "INR",
+      currency: studioCurrency(store),
       ownerId,
       estimatedHours: input.estimatedHours,
       source: input.source,
@@ -789,6 +813,7 @@ export function saveSow(user: SessionUser, input: Project) {
       estimatedHours: input.estimatedHours,
       invoicingStatus: input.invoicingStatus || "Not invoiced",
       paymentStatus: input.paymentStatus,
+      currency: studioCurrency(store),
     });
     audit(store, user, "project.sow", "project", existing.id, `Updated the SOW for ${input.name}.`);
   });

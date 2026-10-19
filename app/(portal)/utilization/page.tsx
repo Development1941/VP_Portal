@@ -44,7 +44,6 @@ export default async function UtilizationPage() {
                 const billable = mine.filter((entry) => entry.billable).reduce((amount, entry) => amount + entryValue(entry, data.features, data.members, data.rates, data.users), 0);
                 total += billable;
                 const rates = [...new Set(mine.map((entry) => resolveBillRate(entry, data.features, data.members, data.rates, data.users)).filter((rate) => rate > 0))];
-                const currency = data.projects.find((project) => mine.some((entry) => entry.projectId === project.id))?.currency || "INR";
                 return (
                   <tr key={person.id}>
                     <td><b>{person.fullName}</b><br /><span className="muted">{person.title || person.roleName}</span></td>
@@ -53,15 +52,15 @@ export default async function UtilizationPage() {
                     ))}
                     <td>{hoursLabel(sum)}</td>
                     <td><Meter value={Math.min(100, utilization)} tone={utilization > 100 ? "bad" : undefined} />{utilization}%</td>
-                    <td>{rates.length === 1 ? `${money(rates[0], currency)}/h` : rates.length > 1 ? "Mixed" : "—"}</td>
-                    <td>{money(billable, currency)}</td>
+                    <td>{rates.length === 1 ? `${money(rates[0], data.currency)}/h` : rates.length > 1 ? "Mixed" : "—"}</td>
+                    <td>{money(billable, data.currency)}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
-        <p className="total-line"><b>Weekly billable total: {money(total)}</b></p>
+        <p className="total-line"><b>Weekly billable total: {money(total, data.currency)}</b></p>
       </section>
       <section className="card">
         <h2>Hours against SOW</h2>

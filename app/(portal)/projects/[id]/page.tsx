@@ -54,7 +54,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         </article>
         <article className="stat">
           <span>Budget</span>
-          <b>{money(project.budgetAmount, project.currency)}</b>
+          <b>{money(project.budgetAmount, data.currency)}</b>
           <em>{economics.budgetUsed}% recognized</em>
         </article>
         <article className="stat">
@@ -117,7 +117,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             <label className="field"><span>Start</span><input type="date" name="startDate" defaultValue={project.startDate} /></label>
             <label className="field"><span>End</span><input type="date" name="endDate" defaultValue={project.endDate} /></label>
             <label className="field"><span>Budget</span><input type="number" name="budgetAmount" defaultValue={project.budgetAmount} /></label>
-            <label className="field"><span>Currency</span><input name="currency" defaultValue={project.currency} /></label>
+            <label className="field"><span>Currency</span><input name="currency" defaultValue={data.currency} readOnly /></label>
             <label className="field wide"><span>Description</span><textarea name="description" defaultValue={project.description} /></label>
             <Submit>Save project</Submit>
           </ActionForm>
@@ -134,7 +134,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                   <tr key={member.userId}>
                     <td>{nameOf(data, member.userId)}</td>
                     <td>{member.memberRole}</td>
-                    <td className="num">{member.billRate ? money(member.billRate) : "—"}</td>
+                    <td className="num">{member.billRate ? money(member.billRate, data.currency) : "—"}</td>
                     <td>
                       {manage && member.userId !== project.ownerId ? (
                         <ActionForm action={removeMemberAction}>
@@ -187,7 +187,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                   <div className="muted">
                     {item.plannedHours > 0 ? hoursLabel(item.plannedHours) : "No hours allocated"}
                     {item.dueDate ? ` · ${prettyDate(item.dueDate)}` : ""}
-                    {item.amount ? ` · ${money(item.amount, project.currency)}` : ""}
+                    {item.amount ? ` · ${money(item.amount, data.currency)}` : ""}
                     {item.description ? ` · ${item.description}` : ""}
                   </div>
                 </div>
@@ -270,7 +270,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                 <p className="muted">{feature.description}</p>
                 <Meter value={progress} />
                 <p>{hoursLabel(logged)} of {hoursLabel(feature.budgetHours)} budgeted</p>
-                <strong>{feature.billingType === "fixed" ? money(feature.fixedAmount, project.currency) : `${money(feature.hourlyRate, project.currency)} / hour`}</strong>
+                <strong>{feature.billingType === "fixed" ? money(feature.fixedAmount, data.currency) : `${money(feature.hourlyRate, data.currency)} / hour`}</strong>
               </article>
             );
           })}

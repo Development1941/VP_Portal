@@ -825,4 +825,25 @@ drop policy if exists workstreams_write on public.workstreams;
 create policy workstreams_write on public.workstreams for update to authenticated
   using (public.has_permission('projects.manage') or public.has_permission('projects.view_all'));
 
+create table if not exists public.studio_settings (
+  id int primary key default 1 check (id = 1),
+  currency text not null default 'INR' check (currency in ('INR', 'USD', 'EUR', 'GBP', 'AED', 'SGD', 'AUD', 'CAD'))
+);
+
+insert into public.studio_settings (id, currency)
+values (1, 'INR')
+on conflict (id) do nothing;
+
+alter table public.studio_settings enable row level security;
+
+drop policy if exists studio_read on public.studio_settings;
+create policy studio_read on public.studio_settings for select to authenticated using (true);
+
+drop policy if exists studio_write on public.studio_settings;
+create policy studio_write on public.studio_settings for update to authenticated
+  using (public.has_permission('settings.manage'))
+  with check (public.has_permission('settings.manage'));
+
+grant select, update on public.studio_settings to authenticated;
+
 notify pgrst, 'reload schema';
