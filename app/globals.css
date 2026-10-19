@@ -228,6 +228,22 @@ textarea { min-height: 88px; resize: vertical; }
 input:focus, select:focus, textarea:focus { outline: 2px solid rgba(139, 26, 26, 0.35); border-color: var(--clay); }
 .banner { padding: 10px 12px; border-radius: 12px; background: var(--rose-soft); color: var(--rose); }
 .banner.ok { background: var(--pine-soft); color: var(--pine); }
+.toaster {
+  position: fixed; right: 20px; bottom: 20px; z-index: 70;
+  display: grid; gap: 8px; width: min(360px, calc(100vw - 32px));
+}
+.toast {
+  display: flex; justify-content: space-between; gap: 12px; align-items: flex-start;
+  padding: 12px 14px; border-radius: 12px; background: #241310; color: white;
+  box-shadow: 0 16px 40px rgba(36, 19, 16, 0.28);
+}
+.toast.bad { background: var(--rose); }
+.toast strong { display: block; font-size: 14px; }
+.toast p { margin: 4px 0 0; color: rgba(255, 255, 255, 0.82); font-size: 13px; }
+.toast a { color: white; font-size: 13px; }
+.toast button {
+  border: 0; background: transparent; color: white; font-size: 18px; line-height: 1; padding: 0; cursor: pointer;
+}
 .checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; }
 .check { display: flex; gap: 8px; align-items: flex-start; color: var(--ink); }
 .check input { width: auto; margin-top: 3px; }

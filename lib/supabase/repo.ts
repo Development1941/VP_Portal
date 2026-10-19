@@ -1,4 +1,4 @@
-import { can, canApproveProject, canEditDelivery, canEditTask, canManageProject, canSeeMilestones, canSeeTeamDsr, canUploadMilestones, leadsProject, projectLeads, projectVisible } from "@/lib/access";
+import { can, canApproveProject, canEditDelivery, canEditTask, canManageProject, canSeeMilestones, canSeeTeamDsr, canUploadMilestones, projectLeads, projectVisible } from "@/lib/access";
 import { currencyCode, isCurrency } from "@/lib/currency";
 import { addDays, stamp, todayIso } from "@/lib/dates";
 import { prettyDate, roundMoney } from "@/lib/format";
@@ -798,6 +798,12 @@ export async function saveTimesheet(user: SessionUser, input: Timesheet) {
   if (!projectVisible(user, project, membership ? [{ projectId: project.id, userId: user.id, memberRole: "", billRate: 0 }] : [])) {
     throw new PortalError("You are not on this project.");
   }
+  const { data: sameDay, error: dayError } = await supabase.from("timesheets").select("id, status, invoice_id").eq("user_id", user.id).eq("work_date", input.workDate);
+  raise(dayError);
+  const rows = sameDay ?? [];
+  if (rows.some((row) => row.invoice_id || row.status === "approved")) {
+    throw new PortalError(`The DSR for ${prettyDate(input.workDate)} is already approved, so it cannot be replaced.`);
+  }
   const payload = {
     user_id: user.id,
     project_id: input.projectId,
@@ -813,17 +819,30 @@ export async function saveTimesheet(user: SessionUser, input: Timesheet) {
     rejection_note: "",
     invoice_id: null,
   };
-  const query = input.id
-    ? supabase.from("timesheets").update(payload).eq("id", input.id).eq("user_id", user.id)
+  const [keeper, ...extras] = rows;
+  if (extras.length) {
+    const { error: extraError } = await supabase.from("timesheets").delete().in("id", extras.map((row) => row.id));
+    if (extraError) {
+      const admin = createServiceClient();
+      if (!admin) raise(extraError);
+      else {
+        const { error: adminError } = await admin.from("timesheets").delete().in("id", extras.map((row) => row.id));
+        raise(adminError);
+      }
+    }
+  }
+  const query = keeper
+    ? supabase.from("timesheets").update(payload).eq("id", keeper.id).eq("user_id", user.id)
     : supabase.from("timesheets").insert(payload);
   const { error } = await query;
   raise(error);
   const members = await milestoneMembers(project.id);
   for (const lead of projectLeads(project, members)) {
     if (lead === user.id) continue;
-    await ping(lead, "DSR filled", `${user.fullName} filled DSR on ${prettyDate(input.workDate)} for ${project.name}.`, `/timesheets?project=${project.id}`);
+    await ping(lead, keeper ? "DSR updated" : "DSR filled", `${user.fullName} ${keeper ? "replaced" : "filled"} the DSR for ${prettyDate(input.workDate)} on ${project.name}.`, `/timesheets?project=${project.id}`);
   }
-  await trail(user, "timesheet.save", "timesheet", input.id, `Logged ${input.hours}h on ${project.name}.`);
+  await trail(user, "timesheet.save", "timesheet", text(keeper?.id), `${keeper ? "Replaced" : "Logged"} ${input.hours}h on ${project.name}.`);
+  return { overwritten: Boolean(keeper) };
 }
 
 export async function deleteTimesheet(user: SessionUser, id: string) {

@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import { addWorkTaskAction, taskStatusAction } from "@/app/actions";
 import { ActionForm, Submit } from "@/components/common/forms";
+import { pushToast } from "@/components/toast";
 import type { Task } from "@/lib/types";
 
 export type WorkCard = {
@@ -35,7 +36,6 @@ export function WorkBoard({
 }) {
   const router = useRouter();
   const [cards, setCards] = useState(tasks);
-  const [error, setError] = useState("");
   const [over, setOver] = useState<Task["status"] | "">("");
   const [dragging, setDragging] = useState("");
   const [adding, setAdding] = useState<Task["status"] | "">("");
@@ -48,7 +48,6 @@ export function WorkBoard({
   function move(id: string, status: Task["status"]) {
     const current = cards.find((item) => item.id === id);
     if (!current || !current.movable || current.status === status) return;
-    setError("");
     setCards((prev) => prev.map((item) => (item.id === id ? { ...item, status } : item)));
     const form = new FormData();
     form.set("id", id);
@@ -57,9 +56,10 @@ export function WorkBoard({
       const result = await taskStatusAction({}, form);
       if (result.error) {
         setCards(tasks);
-        setError(result.error);
+        pushToast({ tone: "bad", title: result.error });
         return;
       }
+      pushToast({ tone: "ok", title: result.ok || "Task updated." });
       router.refresh();
     });
   }
@@ -74,7 +74,6 @@ export function WorkBoard({
 
   return (
     <div className="board-wrap">
-      {error ? <p className="banner">{error}</p> : null}
       <div className="board">
         {COLUMNS.map((column) => {
           const items = cards.filter((card) => card.status === column.status);

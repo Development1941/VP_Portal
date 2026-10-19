@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Outfit } from "next/font/google";
 import { Intro } from "@/components/brand/intro";
+import { Toaster } from "@/components/toast";
 import "./globals.css";
 
 const sans = Outfit({ subsets: ["latin"], display: "swap", variable: "--font-sans" });
@@ -34,6 +35,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body className={sans.variable}>
         <Intro />
         {children}
+        <Toaster />
       </body>
     </html>
   );

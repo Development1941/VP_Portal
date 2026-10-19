@@ -183,6 +183,7 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
       {fillsOwnDsr(user) ? (
         <section className="card">
           <h2>Fill DSR</h2>
+          <p className="muted">One DSR is kept for each day. Saving the same date again replaces that report.</p>
           {entitled.length ? (
             <DsrForm
               projects={entitled.map((project) => ({ id: project.id, name: project.name }))}

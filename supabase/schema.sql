@@ -846,4 +846,15 @@ create policy studio_write on public.studio_settings for update to authenticated
 
 grant select, update on public.studio_settings to authenticated;
 
+with ranked as (
+  select id, row_number() over (
+    partition by user_id, work_date
+    order by (invoice_id is not null) desc, (status = 'approved') desc, id desc
+  ) as n
+  from public.timesheets
+)
+delete from public.timesheets where id in (select id from ranked where n > 1);
+
+create unique index if not exists timesheets_user_day_key on public.timesheets (user_id, work_date);
+
 notify pgrst, 'reload schema';

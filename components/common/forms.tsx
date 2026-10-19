@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect } from "react";
 import { useFormStatus } from "react-dom";
 import { useActionState } from "react";
 import type { FormState } from "@/lib/form";
+import { toastFormState } from "@/components/toast";
 
 export function ActionForm({
   action,
@@ -14,13 +16,10 @@ export function ActionForm({
   className?: string;
 }) {
   const [state, formAction] = useActionState(action, {});
-  return (
-    <form action={formAction} className={className}>
-      {state.error ? <p className="banner">{state.error}</p> : null}
-      {state.ok ? <p className="banner ok">{state.ok}</p> : null}
-      {children}
-    </form>
-  );
+  useEffect(() => {
+    toastFormState(state);
+  }, [state]);
+  return <form action={formAction} className={className}>{children}</form>;
 }
 
 export function Submit({ children, variant = "" }: { children: React.ReactNode; variant?: string }) {

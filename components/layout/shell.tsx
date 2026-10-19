@@ -5,6 +5,7 @@ import { SideNav } from "@/components/layout/nav";
 import { Menu } from "@/components/layout/menu";
 import { NoticeMenu } from "@/components/layout/notice-menu";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
+import { NoticeToasts } from "@/components/toast";
 import { can } from "@/lib/access";
 import { currencyCode } from "@/lib/currency";
 import type { NavLink } from "@/lib/nav";
@@ -26,6 +27,7 @@ export function Shell({
   const firstName = user.fullName.trim().split(/\s+/)[0];
   return (
     <div className="app">
+      <NoticeToasts notes={notes} />
       <aside className="sidebar">
         <div className="brand">
           <Logo />

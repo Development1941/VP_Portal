@@ -5,6 +5,7 @@ import { isCurrency } from "@/lib/currency";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/data";
 import { sowDefaults } from "@/lib/delivery";
+import { prettyDate } from "@/lib/format";
 import { asPermissions, list, num, str, type FormState, PortalError } from "@/lib/form";
 import { getSession, signIn, signOut } from "@/lib/session";
 import type { Client, Escalation, Feature, Milestone, Payment, Project, RateCard, Role, Task, Timesheet, Workstream } from "@/lib/types";
@@ -18,13 +19,13 @@ function filesOf(form: FormData, key: string) {
   return form.getAll(key).filter((item): item is File => item instanceof File && item.size > 0);
 }
 
-async function run(work: () => Promise<void>, ok = "Saved."): Promise<FormState> {
+async function run(work: () => Promise<void | string>, ok = "Saved."): Promise<FormState> {
   const user = await getSession();
   if (!user) return { error: "Your session expired. Sign in again." };
   try {
-    await work();
+    const message = await work();
     revalidatePath("/", "layout");
-    return { ok };
+    return { ok: message || ok };
   } catch (error) {
     if (error instanceof PortalError) {
       revalidatePath("/", "layout");
@@ -299,8 +300,11 @@ export async function saveTimesheetAction(_prev: FormState, form: FormData) {
       rejectionNote: "",
       invoiceId: "",
     };
-    await db().saveTimesheet(user, input);
-  }, "DSR saved.");
+    const saved = await db().saveTimesheet(user, input);
+    return saved.overwritten
+      ? `The DSR for ${prettyDate(input.workDate)} already existed and has been replaced.`
+      : "DSR saved.";
+  });
 }
 
 export async function deleteTimesheetAction(_prev: FormState, form: FormData) {

@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { can, canApproveProject, canEditDelivery, canEditTask, canManageProject, canSeeMilestones, canSeeTeamDsr, canUploadMilestones, leadsProject, projectLeads, projectVisible } from "@/lib/access";
+import { can, canApproveProject, canEditDelivery, canEditTask, canManageProject, canSeeMilestones, canSeeTeamDsr, canUploadMilestones, projectLeads, projectVisible } from "@/lib/access";
 import { billingModelFor, defaultWorkstreams, keepDelivery, sowDefaults, statusForDelivery } from "@/lib/delivery";
 import { ALL_PERMISSIONS, type PermissionKey } from "@/lib/permissions";
 import { addDays, stamp, todayIso } from "@/lib/dates";
@@ -373,15 +373,18 @@ export function saveTimesheet(user: SessionUser, input: Timesheet) {
   return mutate((store) => {
     const project = requireProject(store, input.projectId);
     if (!projectVisible(user, project, store.members)) throw new PortalError("You are not on this project.");
-    const existing = store.timesheets.find((item) => item.id === input.id);
-    if (existing) {
-      if (existing.userId !== user.id) throw new PortalError("You can edit only your own logs.");
-      if (existing.status !== "draft" && existing.status !== "rejected") throw new PortalError("Approved time is locked.");
-      Object.assign(existing, { ...input, userId: user.id, status: "draft", invoiceId: "", approvedBy: "", approvedAt: "", rejectionNote: "" });
+    const sameDay = store.timesheets.filter((item) => item.userId === user.id && item.workDate === input.workDate);
+    if (sameDay.some((item) => item.invoiceId || item.status === "approved")) {
+      throw new PortalError(`The DSR for ${prettyDate(input.workDate)} is already approved, so it cannot be replaced.`);
+    }
+    const [keeper, ...extras] = sameDay;
+    if (extras.length) store.timesheets = store.timesheets.filter((item) => !extras.some((extra) => extra.id === item.id));
+    if (keeper) {
+      Object.assign(keeper, { ...input, id: keeper.id, userId: user.id, status: "draft", invoiceId: "", approvedBy: "", approvedAt: "", rejectionNote: "" });
     } else {
       store.timesheets.unshift({
         ...input,
-        id: nid("ts"),
+        id: input.id || nid("ts"),
         userId: user.id,
         status: "draft",
         approvedBy: "",
@@ -392,9 +395,10 @@ export function saveTimesheet(user: SessionUser, input: Timesheet) {
     }
     for (const lead of projectLeads(project, store.members)) {
       if (lead === user.id) continue;
-      notify(store, lead, "DSR filled", `${user.fullName} filled DSR on ${prettyDate(input.workDate)} for ${project.name}.`, `/timesheets?project=${project.id}`);
+      notify(store, lead, keeper ? "DSR updated" : "DSR filled", `${user.fullName} ${keeper ? "replaced" : "filled"} the DSR for ${prettyDate(input.workDate)} on ${project.name}.`, `/timesheets?project=${project.id}`);
     }
-    audit(store, user, "timesheet.save", "timesheet", input.id, `Logged ${input.hours}h on ${project.name}.`);
+    audit(store, user, "timesheet.save", "timesheet", keeper?.id || input.id, `${keeper ? "Replaced" : "Logged"} ${input.hours}h on ${project.name}.`);
+    return { overwritten: Boolean(keeper) };
   });
 }
 
