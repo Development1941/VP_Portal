@@ -3,9 +3,19 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/data";
+import { sowDefaults } from "@/lib/delivery";
 import { asPermissions, list, num, str, type FormState, PortalError } from "@/lib/form";
 import { getSession, signIn, signOut } from "@/lib/session";
-import type { Client, Feature, Milestone, Payment, Project, RateCard, Role, Task, Timesheet } from "@/lib/types";
+import type { Client, Escalation, Feature, Milestone, Payment, Project, RateCard, Role, Task, Timesheet, Workstream } from "@/lib/types";
+
+function choice<T extends string>(form: FormData, key: string, options: readonly T[], fallback: T): T {
+  const value = str(form, key);
+  return (options as readonly string[]).includes(value) ? (value as T) : fallback;
+}
+
+function filesOf(form: FormData, key: string) {
+  return form.getAll(key).filter((item): item is File => item instanceof File && item.size > 0);
+}
 
 async function run(work: () => Promise<void>, ok = "Saved."): Promise<FormState> {
   const user = await getSession();
@@ -110,6 +120,7 @@ export async function saveProjectAction(_prev: FormState, form: FormData) {
       budgetAmount: num(form, "budgetAmount"),
       currency: str(form, "currency") || "INR",
       ownerId: str(form, "ownerId"),
+      ...sowDefaults(),
     };
     await db().saveProject(user, input);
   }, "Project saved.");
@@ -221,7 +232,9 @@ export async function saveTaskAction(_prev: FormState, form: FormData) {
       status: (str(form, "status") || "backlog") as Task["status"],
       priority: (str(form, "priority") || "medium") as Task["priority"],
       dueDate: str(form, "dueDate"),
+      startDate: "",
       estimatedHours: num(form, "estimatedHours"),
+      actualHours: 0,
     };
     await db().saveTask(user, input);
   }, "Task saved.");
@@ -243,7 +256,9 @@ export async function addWorkTaskAction(_prev: FormState, form: FormData) {
         : "in_progress",
       priority: "medium",
       dueDate: "",
+      startDate: "",
       estimatedHours: 0,
+      actualHours: 0,
     };
     await db().saveTask(user, input);
   }, "Card added.");
@@ -433,4 +448,180 @@ export async function resetDemoAction() {
   }
   revalidatePath("/", "layout");
   redirect("/dashboard");
+}
+
+export async function submitIntakeAction(_prev: FormState, form: FormData): Promise<FormState> {
+  try {
+    const user = await actor();
+    await db().submitIntake(
+      user,
+      {
+        clientName: str(form, "clientName"),
+        name: str(form, "name"),
+        estimatedHours: num(form, "estimatedHours"),
+        startDate: str(form, "startDate"),
+        ownerId: str(form, "ownerId"),
+        source: choice(form, "source", ["requirement_document", "proposal", "meeting_transcript", "email_thread"] as const, "requirement_document"),
+        summary: str(form, "summary"),
+      },
+      filesOf(form, "files"),
+    );
+  } catch (error) {
+    if (error instanceof PortalError) return { error: error.message };
+    throw error;
+  }
+  revalidatePath("/", "layout");
+  redirect("/sow");
+}
+
+export async function saveSowAction(_prev: FormState, form: FormData) {
+  return run(async () => {
+    const user = await actor();
+    const input: Project = {
+      ...sowDefaults(),
+      id: str(form, "id"),
+      clientId: str(form, "clientId"),
+      name: str(form, "name"),
+      code: "",
+      description: str(form, "description"),
+      status: "planning",
+      billingModel: "hourly",
+      startDate: str(form, "startDate"),
+      endDate: str(form, "endDate"),
+      budgetAmount: num(form, "budgetAmount"),
+      currency: str(form, "currency") || "INR",
+      ownerId: str(form, "ownerId"),
+      estimatedHours: num(form, "estimatedHours"),
+      billingTerms: choice(form, "billingTerms", ["milestone", "monthly_tm", "fixed_fee"] as const, "milestone"),
+      approvalStatus: choice(form, "approvalStatus", ["signed", "pending", "rejected"] as const, "pending"),
+      renewalDate: str(form, "renewalDate"),
+      scope: str(form, "scope"),
+      deliverables: str(form, "deliverables"),
+      risks: str(form, "risks"),
+      pendingActions: str(form, "pendingActions"),
+      deliveryOwnerId: str(form, "deliveryOwnerId"),
+      invoicingStatus: str(form, "invoicingStatus") || "Not invoiced",
+      paymentStatus: choice(form, "paymentStatus", ["paid", "partially_paid", "overdue", "not_due"] as const, "not_due"),
+    };
+    await db().saveSow(user, input);
+  }, "SOW saved.");
+}
+
+export async function setDeliveryStatusAction(_prev: FormState, form: FormData) {
+  return run(async () => {
+    const user = await actor();
+    await db().setDeliveryStatus(user, str(form, "projectId"), choice(form, "deliveryStatus", ["in_progress", "done", "blocked"] as const, "in_progress"));
+  }, "Status updated.");
+}
+
+export async function uploadSowAction(_prev: FormState, form: FormData) {
+  return run(async () => {
+    const user = await actor();
+    const file = form.get("file");
+    if (!(file instanceof File)) throw new PortalError("Choose a SOW PDF.");
+    await db().uploadSowFile(user, str(form, "projectId"), file);
+  }, "SOW PDF attached.");
+}
+
+export async function finaliseSowAction(_prev: FormState, form: FormData): Promise<FormState> {
+  try {
+    const user = await actor();
+    await db().finaliseSow(user, str(form, "projectId"));
+  } catch (error) {
+    if (error instanceof PortalError) return { error: error.message };
+    throw error;
+  }
+  revalidatePath("/", "layout");
+  redirect("/resources");
+}
+
+export async function activateProjectAction(_prev: FormState, form: FormData): Promise<FormState> {
+  const projectId = str(form, "projectId");
+  try {
+    const user = await actor();
+    await db().activateProject(user, projectId);
+  } catch (error) {
+    if (error instanceof PortalError) return { error: error.message };
+    throw error;
+  }
+  revalidatePath("/", "layout");
+  redirect(`/delivery?project=${projectId}`);
+}
+
+export async function saveDeliverySheetAction(_prev: FormState, form: FormData) {
+  return run(async () => {
+    const user = await actor();
+    const projectId = str(form, "projectId");
+    const ids = form.getAll("taskId").map((value) => String(value));
+    const rows = ids.map((id) => ({
+      id,
+      title: str(form, `title:${id}`),
+      assigneeId: str(form, `assignee:${id}`),
+      startDate: str(form, `start:${id}`),
+      dueDate: str(form, `end:${id}`),
+      estimatedHours: num(form, `est:${id}`),
+      actualHours: num(form, `act:${id}`),
+    }));
+    await db().saveDeliverySheet(user, projectId, rows);
+  }, "Task sheet saved.");
+}
+
+export async function addDeliveryTaskAction(_prev: FormState, form: FormData) {
+  return run(async () => {
+    const user = await actor();
+    const input: Task & { recordActual: boolean } = {
+      id: "",
+      projectId: str(form, "projectId"),
+      milestoneId: "",
+      featureId: "",
+      title: str(form, "title") || "New task",
+      description: "",
+      assigneeId: str(form, "assigneeId"),
+      status: "backlog",
+      priority: "medium",
+      dueDate: str(form, "dueDate"),
+      startDate: str(form, "startDate"),
+      estimatedHours: num(form, "estimatedHours"),
+      actualHours: num(form, "actualHours"),
+      recordActual: true,
+    };
+    await db().saveTask(user, input);
+  }, "Task added.");
+}
+
+export async function raiseEscalationAction(_prev: FormState, form: FormData): Promise<FormState> {
+  try {
+    const user = await actor();
+    await db().raiseEscalation(user, {
+      projectId: str(form, "projectId"),
+      type: choice(form, "type", ["blocker", "concern", "dependency"] as const, "blocker") satisfies Escalation["type"],
+      description: str(form, "description"),
+      ownerName: str(form, "ownerName"),
+      dueDate: str(form, "dueDate"),
+    });
+  } catch (error) {
+    if (error instanceof PortalError) return { error: error.message };
+    throw error;
+  }
+  revalidatePath("/", "layout");
+  redirect("/escalations");
+}
+
+export async function setEscalationStatusAction(_prev: FormState, form: FormData) {
+  return run(async () => {
+    const user = await actor();
+    await db().setEscalationStatus(user, str(form, "id"), choice(form, "status", ["open", "in_review", "resolved"] as const, "open"));
+  }, "Escalation updated.");
+}
+
+export async function saveWorkstreamAction(_prev: FormState, form: FormData) {
+  return run(async () => {
+    const user = await actor();
+    await db().saveWorkstream(user, {
+      id: str(form, "id"),
+      ownerName: str(form, "ownerName"),
+      targetDate: str(form, "targetDate"),
+      status: choice(form, "status", ["in_progress", "blocked", "done"] as const, "in_progress") satisfies Workstream["status"],
+    });
+  }, "Workstream updated.");
 }

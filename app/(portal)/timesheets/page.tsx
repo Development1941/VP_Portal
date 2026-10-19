@@ -2,10 +2,11 @@ import { decideTimesheetAction, deleteTimesheetAction, submitTimesheetsAction } 
 import { ActionForm, Submit } from "@/components/common/forms";
 import { DsrForm } from "@/components/time/dsr-form";
 import { Badge, Denied, Empty, PageHeader } from "@/components/common/ui";
-import { can, canApproveProject, canSeeTeamDsr } from "@/lib/access";
+import { can, canApproveProject, canSeeTeamDsr, fillsOwnDsr } from "@/lib/access";
 import { addDays, startOfWeek, todayIso } from "@/lib/dates";
 import { hoursLabel, prettyDate } from "@/lib/format";
 import { nameOf, projectOf, requirePage } from "@/lib/page";
+import type { Workspace } from "@/lib/types";
 
 function weekHref(week: string, projectId: string) {
   const params = new URLSearchParams({ week });
@@ -13,10 +14,123 @@ function weekHref(week: string, projectId: string) {
   return `?${params.toString()}`;
 }
 
-export default async function TimesheetsPage({ searchParams }: { searchParams: Promise<{ week?: string; project?: string }> }) {
+function directorHref(roleId: string, personId = "") {
+  const params = new URLSearchParams();
+  if (roleId) params.set("role", roleId);
+  if (personId) params.set("person", personId);
+  const query = params.toString();
+  return query ? `?${query}` : "/timesheets";
+}
+
+function DirectorDsr({ data, query }: { data: Workspace; query: { role?: string; person?: string } }) {
+  const people = data.users.filter((person) => person.roleSlug !== "director" && person.status !== "inactive");
+  const roles = [...new Map(people.map((person) => [person.roleId, { id: person.roleId, name: person.roleName }])).values()].sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
+  const role = roles.find((item) => item.id === query.role) ?? null;
+  const members = role ? people.filter((person) => person.roleId === role.id).sort((a, b) => a.fullName.localeCompare(b.fullName)) : [];
+  const person = members.find((item) => item.id === query.person) ?? null;
+  const entries = person
+    ? data.timesheets.filter((entry) => entry.userId === person.id).sort((a, b) => b.workDate.localeCompare(a.workDate))
+    : [];
+  const billable = entries.filter((entry) => entry.billable).reduce((sum, entry) => sum + entry.hours, 0);
+  const other = entries.filter((entry) => !entry.billable).reduce((sum, entry) => sum + entry.hours, 0);
+
+  return (
+    <>
+      <PageHeader eyebrow="Time" title="Daily status report" lede="Directors do not file a DSR. Choose a role, then a person, to read the reports they have filed." />
+      <section className="card">
+        <h2>Role</h2>
+        {!roles.length ? <Empty>No other roles have people on the team yet.</Empty> : null}
+        <div className="pick-grid">
+          {roles.map((item) => {
+            const count = people.filter((person) => person.roleId === item.id).length;
+            return (
+              <a key={item.id} className={`pick ${item.id === role?.id ? "on" : ""}`} href={directorHref(item.id)}>
+                <strong>{item.name}</strong>
+                <span>{count} {count === 1 ? "person" : "people"}</span>
+              </a>
+            );
+          })}
+        </div>
+      </section>
+      {role ? (
+        <section className="card">
+          <h2>{role.name}</h2>
+          {!members.length ? <Empty>Nobody with this role is available.</Empty> : null}
+          <div className="pick-grid">
+            {members.map((member) => {
+              const filed = data.timesheets.filter((entry) => entry.userId === member.id).length;
+              return (
+                <a key={member.id} className={`pick ${member.id === person?.id ? "on" : ""}`} href={directorHref(role.id, member.id)}>
+                  <strong>{member.fullName}</strong>
+                  <span>{member.title || member.email}</span>
+                  <em>{filed ? `${filed} DSR ${filed === 1 ? "entry" : "entries"}` : "No DSR yet"}</em>
+                </a>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+      {person ? (
+        <section className="card">
+          <div className="card-head">
+            <h2>{person.fullName}</h2>
+            <span className="muted">{person.roleName}{person.title ? ` · ${person.title}` : ""}</span>
+          </div>
+          <section className="stats">
+            <article className="stat">
+              <span>Billable</span>
+              <b>{hoursLabel(billable)}</b>
+            </article>
+            <article className="stat">
+              <span>Non-billable</span>
+              <b>{hoursLabel(other)}</b>
+            </article>
+          </section>
+          {!entries.length ? <Empty>{person.fullName} has not filed a DSR yet.</Empty> : null}
+          {entries.length ? (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Project</th>
+                    <th>Note</th>
+                    <th>Type</th>
+                    <th className="num">Hours</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {entries.map((entry) => (
+                    <tr key={entry.id}>
+                      <td>{prettyDate(entry.workDate)}</td>
+                      <td>{projectOf(data, entry.projectId)?.name}</td>
+                      <td>
+                        {entry.description}
+                        {entry.rejectionNote ? <div className="muted">Returned: {entry.rejectionNote}</div> : null}
+                      </td>
+                      <td>{entry.billable ? "Billable" : "Non-billable"}</td>
+                      <td className="num">{hoursLabel(entry.hours)}</td>
+                      <td><Badge value={entry.status} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+    </>
+  );
+}
+
+export default async function TimesheetsPage({ searchParams }: { searchParams: Promise<{ week?: string; project?: string; role?: string; person?: string }> }) {
   const { user, data, allowed } = await requirePage(["timesheets.submit", "timesheets.approve", "timesheets.view_all"]);
   if (!allowed) return <Denied title="DSR" />;
   const query = await searchParams;
+  if (user.roleSlug === "director") return <DirectorDsr data={data} query={query} />;
   const entitled = data.projects;
   const selected = entitled.find((project) => project.id === query.project) ?? entitled[0];
   const weekStart = query.week || startOfWeek();
@@ -66,7 +180,7 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
           <b>{hoursLabel(other)}</b>
         </article>
       </section>
-      {can(user, "timesheets.submit") ? (
+      {fillsOwnDsr(user) ? (
         <section className="card">
           <h2>Fill DSR</h2>
           {entitled.length ? (

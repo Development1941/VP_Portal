@@ -170,6 +170,16 @@ p { margin: 0; }
 .stat span, .stat em { color: var(--muted); font-style: normal; font-size: 13px; }
 .stat b { font-size: 1.7rem; }
 .split { display: grid; grid-template-columns: 1.4fr 0.8fr; gap: 14px; }
+.task-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; align-items: start; }
+.plist { display: grid; gap: 8px; }
+.plist a { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); text-decoration: none; color: inherit; }
+.plist a.on { border-color: var(--clay); box-shadow: inset 3px 0 0 var(--clay); }
+.task-head, .card-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.inline-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.inline-form input, .inline-form select { width: auto; min-width: 140px; }
+.sheet-table input, .sheet-table select { min-width: 0; padding: 6px 8px; }
+.total-line { text-align: right; margin: 12px 0 0; }
+.field input[type="file"] { padding: 8px; }
 .stack, .card, .sheet { display: grid; gap: 14px; }
 .card, .sheet { padding: 18px; }
 .card-head, .row-between { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
@@ -270,6 +280,15 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(139, 26, 26,
 .meter.warn span { background: var(--gold); }
 .meter.bad span { background: var(--clay); }
 .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+.pick {
+  display: grid; gap: 4px; padding: 16px; text-decoration: none; color: inherit;
+  background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+}
+.pick:hover, .pick.on { border-color: var(--clay); }
+.pick.on { box-shadow: inset 3px 0 0 var(--clay); }
+.pick strong { font-size: 1.05rem; }
+.pick span, .pick em { color: var(--muted); font-style: normal; font-size: 13px; }
 .login {
   min-height: 100vh;
   min-height: 100dvh;
@@ -432,7 +451,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(139, 26, 26,
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 1023px) {
-  .split { grid-template-columns: 1fr; }
+  .split, .task-layout { grid-template-columns: 1fr; }
   .sidebar { width: 220px; }
   .app { grid-template-columns: 220px 1fr; }
   .poster-copy h1 { font-size: clamp(2rem, 3.4vw, 2.8rem); }

@@ -1,6 +1,7 @@
-import { can, canApproveProject, canEditTask, canManageProject, canSeeMilestones, canSeeTeamDsr, canUploadMilestones, leadsProject, projectLeads, projectVisible } from "@/lib/access";
+import { can, canApproveProject, canEditDelivery, canEditTask, canManageProject, canSeeMilestones, canSeeTeamDsr, canUploadMilestones, leadsProject, projectLeads, projectVisible } from "@/lib/access";
 import { addDays, stamp, todayIso } from "@/lib/dates";
 import { prettyDate, roundMoney } from "@/lib/format";
+import { billingModelFor, keepDelivery, sowDefaults, statusForDelivery } from "@/lib/delivery";
 import { packHours, unpackHours } from "@/lib/health";
 import { PortalError } from "@/lib/form";
 import { ALL_PERMISSIONS, type PermissionKey } from "@/lib/permissions";
@@ -10,17 +11,20 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   Client,
   DirectoryUser,
+  Escalation,
   Feature,
   Invoice,
   Milestone,
   Payment,
   Project,
+  ProjectFile,
   RateCard,
   Role,
   SessionUser,
   Task,
   Timesheet,
   Workspace,
+  Workstream,
 } from "@/lib/types";
 
 type Row = Record<string, unknown>;
@@ -118,6 +122,23 @@ function mapProject(row: Row): Project {
     budgetAmount: num(row.budget_amount),
     currency: text(row.currency) || "INR",
     ownerId: text(row.owner_id),
+    estimatedHours: num(row.estimated_hours),
+    source: oneOf(row.source, ["requirement_document", "proposal", "meeting_transcript", "email_thread"] as const, "requirement_document"),
+    sowStage: oneOf(row.sow_stage, ["draft", "finalised"] as const, "draft"),
+    deliveryStatus: oneOf(row.delivery_status, ["in_progress", "done", "blocked"] as const, "in_progress"),
+    billingTerms: oneOf(row.billing_terms, ["milestone", "monthly_tm", "fixed_fee"] as const, "milestone"),
+    approvalStatus: oneOf(row.approval_status, ["signed", "pending", "rejected"] as const, "pending"),
+    renewalDate: text(row.renewal_date),
+    scope: text(row.scope),
+    deliverables: text(row.deliverables),
+    risks: text(row.risks),
+    pendingActions: text(row.pending_actions),
+    deliveryOwnerId: text(row.delivery_owner_id),
+    invoicingStatus: text(row.invoicing_status) || "Not invoiced",
+    paymentStatus: oneOf(row.payment_status, ["paid", "partially_paid", "overdue", "not_due"] as const, "not_due"),
+    activated: Boolean(row.activated),
+    sowFileName: text(row.sow_file_name),
+    sowFilePath: text(row.sow_file_path),
   };
 }
 
@@ -161,7 +182,9 @@ function mapTask(row: Row): Task {
     status: oneOf(row.status, ["backlog", "in_progress", "review", "done"] as const, "backlog"),
     priority: oneOf(row.priority, ["low", "medium", "high", "urgent"] as const, "medium"),
     dueDate: text(row.due_date),
+    startDate: text(row.start_date),
     estimatedHours: num(row.estimated_hours),
+    actualHours: num(row.actual_hours),
   };
 }
 
@@ -231,6 +254,41 @@ function mapPayment(row: Row): Payment {
   };
 }
 
+function mapEscalation(row: Row): Escalation {
+  return {
+    id: text(row.id),
+    projectId: text(row.project_id),
+    type: oneOf(row.type, ["blocker", "concern", "dependency"] as const, "blocker"),
+    description: text(row.description),
+    ownerName: text(row.owner_name),
+    dueDate: text(row.due_date),
+    status: oneOf(row.status, ["open", "in_review", "resolved"] as const, "open"),
+    createdBy: text(row.created_by),
+    createdAt: text(row.created_at),
+  };
+}
+
+function mapFile(row: Row): ProjectFile {
+  return {
+    id: text(row.id),
+    projectId: text(row.project_id),
+    kind: oneOf(row.kind, ["requirement", "sow"] as const, "requirement"),
+    fileName: text(row.file_name),
+    createdBy: text(row.created_by),
+    createdAt: text(row.created_at),
+  };
+}
+
+function mapWorkstream(row: Row): Workstream {
+  return {
+    id: text(row.id),
+    name: text(row.name),
+    ownerName: text(row.owner_name),
+    targetDate: text(row.target_date),
+    status: oneOf(row.status, ["in_progress", "blocked", "done"] as const, "in_progress"),
+  };
+}
+
 async function loadProject(id: string) {
   const supabase = await client();
   const { data, error } = await supabase.from("projects").select("*").eq("id", id).maybeSingle();
@@ -294,17 +352,17 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
   const seePayments = can(user, "payments.view") || seeMoney;
   const seeAudit = can(user, "audit.view");
   const showCost = can(user, "team.manage") || can(user, "reports.financial") || can(user, "payments.manage") || can(user, "reports.project");
-  const [rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, costRes] =
+  const [rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, costRes, escalationRes, fileRes, workstreamRes] =
     await Promise.all([
       supabase.from("roles").select("id, name, slug, description, is_system, locked").order("name"),
       seeGrants ? supabase.from("role_permissions").select("role_id, permission_key") : skipped(),
       supabase.from("profiles").select("id, full_name, email, title, phone, role_id, status"),
       supabase.from("clients").select("id, name, company, email, phone, billing_email, address, tax_id, currency, status, notes").order("company"),
-      supabase.from("projects").select("id, client_id, name, code, description, status, billing_model, start_date, end_date, budget_amount, currency, owner_id").order("name"),
+      supabase.from("projects").select("id, client_id, name, code, description, status, billing_model, start_date, end_date, budget_amount, currency, owner_id, estimated_hours, source, sow_stage, delivery_status, billing_terms, approval_status, renewal_date, scope, deliverables, risks, pending_actions, delivery_owner_id, invoicing_status, payment_status, activated, sow_file_name, sow_file_path").order("name"),
       supabase.from("project_members").select("project_id, user_id, member_role, bill_rate"),
       supabase.from("milestones").select("id, project_id, name, description, due_date, status, amount"),
       supabase.from("features").select("id, project_id, name, description, billing_type, hourly_rate, fixed_amount, budget_hours, status"),
-      supabase.from("tasks").select("id, project_id, milestone_id, feature_id, title, description, assignee_id, status, priority, due_date, estimated_hours"),
+      supabase.from("tasks").select("id, project_id, milestone_id, feature_id, title, description, assignee_id, status, priority, due_date, start_date, estimated_hours, actual_hours"),
       supabase.from("timesheets").select("id, user_id, project_id, task_id, feature_id, work_date, hours, billable, description, status, approved_by, approved_at, rejection_note, invoice_id"),
       seeRates ? supabase.from("rates").select("id, label, scope, target_id, hourly_rate, currency, effective_from") : skipped(),
       seeMoney ? supabase.from("invoices").select("id, number, client_id, project_id, issue_date, due_date, status, tax_rate, notes, created_by").order("issue_date", { ascending: false }) : skipped(),
@@ -313,8 +371,11 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
       supabase.from("notifications").select("id, user_id, title, body, href, read, created_at").eq("user_id", user.id).order("created_at", { ascending: false }).limit(40),
       seeAudit ? supabase.from("audit_logs").select("id, actor_id, action, entity, entity_id, summary, created_at").order("created_at", { ascending: false }).limit(80) : skipped(),
       showCost ? supabase.rpc("staff_costs") : skipped(),
+      supabase.from("escalations").select("id, project_id, type, description, owner_name, due_date, status, created_by, created_at").order("created_at", { ascending: false }),
+      supabase.from("project_files").select("id, project_id, kind, file_name, created_by, created_at").order("created_at", { ascending: false }),
+      supabase.from("workstreams").select("id, name, owner_name, target_date, status").order("name"),
     ]);
-  for (const result of [rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes]) {
+  for (const result of [rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, escalationRes, fileRes, workstreamRes]) {
     raise(result.error);
   }
 
@@ -345,11 +406,10 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
   const projects = (projectRes.data ?? []).map(mapProject).filter((project) => projectVisible(user, project, members));
   const ids = new Set(projects.map((project) => project.id));
   let taskRows = taskRes.data ?? [];
-  const leadProjectIds = projects.filter((project) => leadsProject(user, project, members)).map((project) => project.id);
-  if (leadProjectIds.length && !can(user, "tasks.manage") && !can(user, "projects.view_all")) {
+  if (projects.length && !can(user, "tasks.manage") && !can(user, "projects.view_all")) {
     const admin = createServiceClient();
     if (admin) {
-      const { data: extra } = await admin.from("tasks").select("*").in("project_id", leadProjectIds);
+      const { data: extra } = await admin.from("tasks").select("*").in("project_id", projects.map((project) => project.id));
       const byId = new Map(taskRows.map((row) => [row.id, row]));
       for (const row of extra ?? []) byId.set(row.id, row);
       taskRows = [...byId.values()];
@@ -371,14 +431,7 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
       return Boolean(project && canSeeMilestones(user, project, members));
     }),
     features: (featureRes.data ?? []).map(mapFeature).filter((item) => ids.has(item.projectId)),
-    tasks: taskRows
-      .map(mapTask)
-      .filter((item) => {
-        if (!ids.has(item.projectId)) return false;
-        if (can(user, "tasks.manage") || can(user, "projects.view_all") || item.assigneeId === user.id) return true;
-        const project = projects.find((entry) => entry.id === item.projectId);
-        return Boolean(project && leadsProject(user, project, members));
-      }),
+    tasks: taskRows.map(mapTask).filter((item) => ids.has(item.projectId)),
     timesheets: (timeRes.data ?? []).map(mapTime).filter((item) => {
       const project = projects.find((entry) => entry.id === item.projectId);
       if (!project) return false;
@@ -416,6 +469,9 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
       summary: text(row.summary),
       createdAt: text(row.created_at),
     })),
+    escalations: rows(escalationRes).map(mapEscalation).filter((item) => ids.has(item.projectId)),
+    files: rows(fileRes).map(mapFile).filter((item) => ids.has(item.projectId)),
+    workstreams: rows(workstreamRes).map(mapWorkstream),
   };
 }
 
@@ -448,23 +504,42 @@ export async function saveProject(user: SessionUser, input: Project) {
   if (!can(user, "projects.manage")) throw new PortalError("You cannot edit projects.");
   if (!input.name || !input.clientId) throw new PortalError("Project name and client are required.");
   if (!can(user, "projects.view_all")) input.ownerId = user.id;
+  let saved = { ...sowDefaults(), ...input };
   if (input.id) {
     const existing = await loadProject(input.id);
     if (!canManageProject(user, existing)) throw new PortalError("You can edit only projects you own.");
+    saved = keepDelivery(existing, input);
   }
   const supabase = await client();
   const payload = {
-    client_id: input.clientId,
-    name: input.name,
-    code: input.code,
-    description: input.description,
-    status: input.status,
-    billing_model: input.billingModel,
-    start_date: uuid(input.startDate),
-    end_date: uuid(input.endDate),
-    budget_amount: input.budgetAmount,
-    currency: input.currency || "INR",
-    owner_id: input.ownerId,
+    client_id: saved.clientId,
+    name: saved.name,
+    code: saved.code,
+    description: saved.description,
+    status: saved.status,
+    billing_model: saved.billingModel,
+    start_date: uuid(saved.startDate),
+    end_date: uuid(saved.endDate),
+    budget_amount: saved.budgetAmount,
+    currency: saved.currency || "INR",
+    owner_id: saved.ownerId,
+    estimated_hours: saved.estimatedHours,
+    source: saved.source,
+    sow_stage: saved.sowStage,
+    delivery_status: saved.deliveryStatus,
+    billing_terms: saved.billingTerms,
+    approval_status: saved.approvalStatus,
+    renewal_date: uuid(saved.renewalDate),
+    scope: saved.scope,
+    deliverables: saved.deliverables,
+    risks: saved.risks,
+    pending_actions: saved.pendingActions,
+    delivery_owner_id: uuid(saved.deliveryOwnerId),
+    invoicing_status: saved.invoicingStatus || "Not invoiced",
+    payment_status: saved.paymentStatus,
+    activated: saved.activated,
+    sow_file_name: saved.sowFileName,
+    sow_file_path: saved.sowFilePath,
   };
   const query = input.id
     ? supabase.from("projects").update(payload).eq("id", input.id).select("id").single()
@@ -611,7 +686,7 @@ export async function saveFeature(user: SessionUser, input: Feature) {
   await trail(user, "feature.save", "feature", input.id, `Saved feature ${input.name}.`);
 }
 
-export async function saveTask(user: SessionUser, input: Task) {
+export async function saveTask(user: SessionUser, input: Task & { recordActual?: boolean }) {
   const project = await loadProject(input.projectId);
   const supabase = await client();
   const { data: membership, error: memberError } = await supabase
@@ -642,6 +717,7 @@ export async function saveTask(user: SessionUser, input: Task) {
     priority: input.priority,
     due_date: uuid(input.dueDate),
     estimated_hours: input.estimatedHours,
+    ...(input.recordActual ? { start_date: uuid(input.startDate), actual_hours: input.actualHours } : {}),
   };
   const query = input.id ? supabase.from("tasks").update(payload).eq("id", input.id) : supabase.from("tasks").insert(payload);
   let { error } = await query;
@@ -690,6 +766,7 @@ function assertHours(input: Timesheet) {
 }
 
 export async function saveTimesheet(user: SessionUser, input: Timesheet) {
+  if (user.roleSlug === "director") throw new PortalError("The director reads DSR. They do not file one.");
   if (!can(user, "timesheets.submit")) throw new PortalError("You cannot submit timesheets.");
   assertHours(input);
   const project = await loadProject(input.projectId);
@@ -1088,6 +1165,282 @@ export async function markNotifications(user: SessionUser, id: string) {
   const query = supabase.from("notifications").update({ read: true }).eq("user_id", user.id);
   const { error } = id === "all" ? await query : await query.eq("id", id);
   raise(error);
+}
+
+async function visibleProject(user: SessionUser, projectId: string) {
+  const project = await loadProject(projectId);
+  const members = await milestoneMembers(project.id);
+  if (!projectVisible(user, project, members)) throw new PortalError("That project is outside your access.");
+  return project;
+}
+
+async function ensureClient(user: SessionUser, name: string) {
+  const company = name.trim();
+  if (!company) throw new PortalError("Client name is required.");
+  const supabase = await client();
+  const { data, error } = await supabase.from("clients").select("id, name, company");
+  raise(error);
+  const found = (data ?? []).find((row) => text(row.company).toLowerCase() === company.toLowerCase() || text(row.name).toLowerCase() === company.toLowerCase());
+  if (found) return text(found.id);
+  const payload = { name: company, company, currency: "INR", status: "active" };
+  let inserted = await supabase.from("clients").insert(payload).select("id").single();
+  if (inserted.error) {
+    const admin = createServiceClient();
+    if (!admin || !can(user, "projects.manage")) throw new PortalError(inserted.error.message);
+    inserted = await admin.from("clients").insert(payload).select("id").single();
+  }
+  raise(inserted.error);
+  if (!inserted.data) throw new PortalError("That client could not be created.");
+  return text(inserted.data.id);
+}
+
+async function storeProjectFile(user: SessionUser, projectId: string, kind: "requirement" | "sow", file: File) {
+  if (file.size > 8_000_000) throw new PortalError("Keep each file under 8 MB.");
+  const allowed = ["pdf", "doc", "docx", "txt", "vtt"];
+  const ext = file.name.split(".").pop()?.toLowerCase() || "";
+  if (kind === "sow" && ext !== "pdf") throw new PortalError("The SOW file must be a PDF.");
+  if (!allowed.includes(ext)) throw new PortalError("Upload a PDF, Word, text, or transcript file.");
+  const admin = createServiceClient();
+  if (!admin) throw new PortalError("Set SUPABASE_SERVICE_ROLE_KEY to upload project files.");
+  const bucket = await admin.storage.getBucket("project-docs");
+  if (bucket.error) {
+    const created = await admin.storage.createBucket("project-docs", { public: false });
+    if (created.error && !/already exists/i.test(created.error.message)) throw new PortalError(created.error.message);
+  }
+  const safe = file.name.replace(/[^\w.\- ]+/g, "").slice(0, 80) || `file.${ext}`;
+  const path = `${projectId}/${kind}/${crypto.randomUUID()}-${safe}`;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const { error } = await admin.storage.from("project-docs").upload(path, bytes, { contentType: file.type || "application/octet-stream", upsert: false });
+  if (error) throw new PortalError(error.message);
+  const supabase = await client();
+  const { error: rowError } = await supabase.from("project_files").insert({
+    project_id: projectId,
+    kind,
+    file_name: file.name,
+    storage_path: path,
+    created_by: user.id,
+  });
+  if (rowError) {
+    const { error: adminError } = await admin.from("project_files").insert({
+      project_id: projectId,
+      kind,
+      file_name: file.name,
+      storage_path: path,
+      created_by: user.id,
+    });
+    raise(adminError);
+  }
+  if (kind === "sow") {
+    const { error: sowError } = await supabase.from("projects").update({ sow_file_name: file.name, sow_file_path: path }).eq("id", projectId);
+    if (sowError) {
+      const { error: adminError } = await admin.from("projects").update({ sow_file_name: file.name, sow_file_path: path }).eq("id", projectId);
+      raise(adminError);
+    }
+  }
+}
+
+export async function submitIntake(
+  user: SessionUser,
+  input: { clientName: string; name: string; estimatedHours: number; startDate: string; ownerId: string; source: Project["source"]; summary: string },
+  files: File[],
+) {
+  if (!can(user, "projects.manage")) throw new PortalError("You cannot submit a project intake.");
+  if (!input.name.trim()) throw new PortalError("Project name is required.");
+  const ownerId = can(user, "projects.view_all") ? input.ownerId || user.id : user.id;
+  const clientId = await ensureClient(user, input.clientName);
+  const supabase = await client();
+  const defaults = sowDefaults();
+  const { data, error } = await supabase
+    .from("projects")
+    .insert({
+      client_id: clientId,
+      name: input.name.trim(),
+      code: input.name.trim().replace(/\s+/g, "-").slice(0, 16).toUpperCase(),
+      description: input.summary.trim(),
+      status: "planning",
+      billing_model: "hourly",
+      start_date: uuid(input.startDate),
+      owner_id: ownerId,
+      estimated_hours: input.estimatedHours,
+      source: input.source,
+      sow_stage: defaults.sowStage,
+      delivery_status: defaults.deliveryStatus,
+      billing_terms: defaults.billingTerms,
+      approval_status: defaults.approvalStatus,
+      invoicing_status: defaults.invoicingStatus,
+      payment_status: defaults.paymentStatus,
+      activated: false,
+    })
+    .select("id")
+    .single();
+  raise(error);
+  if (!data) throw new PortalError("That intake could not be saved.");
+  const { error: memberError } = await supabase.from("project_members").insert({ project_id: data.id, user_id: ownerId, member_role: "Owner", bill_rate: 0 });
+  raise(memberError);
+  for (const file of files) {
+    if (file.size > 0) await storeProjectFile(user, data.id, "requirement", file);
+  }
+  await trail(user, "project.intake", "project", data.id, `Submitted intake ${input.name.trim()}.`);
+  return data.id as string;
+}
+
+export async function saveSow(user: SessionUser, input: Project) {
+  const existing = await visibleProject(user, input.id);
+  if (!canManageProject(user, existing) && !can(user, "projects.view_all")) throw new PortalError("You cannot finalise this SOW.");
+  const supabase = await client();
+  const { error } = await supabase
+    .from("projects")
+    .update({
+      name: input.name,
+      client_id: input.clientId,
+      description: input.description,
+      budget_amount: input.budgetAmount,
+      currency: input.currency || existing.currency || "INR",
+      billing_terms: input.billingTerms,
+      billing_model: billingModelFor(input.billingTerms),
+      start_date: uuid(input.startDate),
+      end_date: uuid(input.endDate),
+      approval_status: input.approvalStatus,
+      renewal_date: uuid(input.renewalDate),
+      scope: input.scope,
+      deliverables: input.deliverables,
+      risks: input.risks,
+      pending_actions: input.pendingActions,
+      owner_id: input.ownerId || existing.ownerId,
+      delivery_owner_id: uuid(input.deliveryOwnerId),
+      estimated_hours: input.estimatedHours,
+      invoicing_status: input.invoicingStatus || "Not invoiced",
+      payment_status: input.paymentStatus,
+    })
+    .eq("id", existing.id);
+  raise(error);
+  await trail(user, "project.sow", "project", existing.id, `Updated the SOW for ${input.name}.`);
+}
+
+export async function setDeliveryStatus(user: SessionUser, projectId: string, deliveryStatus: Project["deliveryStatus"]) {
+  const project = await visibleProject(user, projectId);
+  if (!canManageProject(user, project) && !can(user, "projects.view_all")) throw new PortalError("You cannot change this project status.");
+  const supabase = await client();
+  const { error } = await supabase
+    .from("projects")
+    .update({ delivery_status: deliveryStatus, status: statusForDelivery(deliveryStatus, project.activated) })
+    .eq("id", projectId);
+  raise(error);
+  await trail(user, "project.status", "project", projectId, `Set ${project.name} to ${deliveryStatus.replaceAll("_", " ")}.`);
+}
+
+export async function uploadSowFile(user: SessionUser, projectId: string, file: File) {
+  const project = await visibleProject(user, projectId);
+  if (!canManageProject(user, project) && !can(user, "projects.view_all")) throw new PortalError("You cannot attach a SOW.");
+  if (!(file instanceof File) || file.size === 0) throw new PortalError("Choose a SOW PDF.");
+  await storeProjectFile(user, projectId, "sow", file);
+  await trail(user, "project.sow_file", "project", projectId, `Attached the SOW for ${project.name}.`);
+}
+
+export async function finaliseSow(user: SessionUser, projectId: string) {
+  const project = await visibleProject(user, projectId);
+  if (!canManageProject(user, project) && !can(user, "projects.view_all")) throw new PortalError("You cannot finalise this SOW.");
+  if (project.sowStage === "finalised") return;
+  const supabase = await client();
+  const { error } = await supabase.from("projects").update({ sow_stage: "finalised" }).eq("id", projectId);
+  raise(error);
+  await trail(user, "project.finalise", "project", projectId, `Finalised the SOW for ${project.name}.`);
+  await ping(project.ownerId, "SOW finalised", `${project.name} can now be staffed.`, "/resources");
+}
+
+export async function activateProject(user: SessionUser, projectId: string) {
+  const project = await visibleProject(user, projectId);
+  if (project.sowStage !== "finalised") throw new PortalError("Finalise the SOW before activating the project.");
+  if (!canManageProject(user, project) && !can(user, "tasks.manage")) throw new PortalError("You cannot activate this project.");
+  const supabase = await client();
+  const { error } = await supabase.from("projects").update({ activated: true, status: "active", delivery_status: project.deliveryStatus === "done" ? "done" : "in_progress" }).eq("id", projectId);
+  raise(error);
+  await trail(user, "project.activate", "project", projectId, `Activated ${project.name} for delivery.`);
+}
+
+export async function saveDeliverySheet(
+  user: SessionUser,
+  projectId: string,
+  rows: { id: string; title: string; assigneeId: string; startDate: string; dueDate: string; estimatedHours: number; actualHours: number }[],
+) {
+  const project = await visibleProject(user, projectId);
+  if (!project.activated) throw new PortalError("Activate the project before editing tasks.");
+  if (!canEditDelivery(user, project)) throw new PortalError("Only the project owner can edit these tasks.");
+  const supabase = await client();
+  for (const row of rows) {
+    if (!row.id || !row.title.trim()) continue;
+    const { error } = await supabase
+      .from("tasks")
+      .update({
+        title: row.title.trim(),
+        assignee_id: uuid(row.assigneeId),
+        start_date: uuid(row.startDate),
+        due_date: uuid(row.dueDate),
+        estimated_hours: row.estimatedHours,
+        actual_hours: row.actualHours,
+      })
+      .eq("id", row.id)
+      .eq("project_id", projectId);
+    raise(error);
+  }
+  await trail(user, "task.sheet", "project", projectId, `Updated the task sheet for ${project.name}.`);
+}
+
+export async function raiseEscalation(
+  user: SessionUser,
+  input: { projectId: string; type: Escalation["type"]; description: string; ownerName: string; dueDate: string },
+) {
+  const project = await visibleProject(user, input.projectId);
+  if (!input.description.trim()) throw new PortalError("Describe the issue and the support needed.");
+  const supabase = await client();
+  const { error } = await supabase.from("escalations").insert({
+    project_id: project.id,
+    type: input.type,
+    description: input.description.trim(),
+    owner_name: input.ownerName.trim() || user.fullName,
+    due_date: uuid(input.dueDate),
+    status: "open",
+    created_by: user.id,
+  });
+  raise(error);
+  await trail(user, "escalation.raise", "project", project.id, `Raised a ${input.type} on ${project.name}.`);
+  await ping(project.ownerId, "Escalation raised", `${user.fullName} raised a ${input.type} on ${project.name}.`, "/escalations");
+}
+
+export async function setEscalationStatus(user: SessionUser, id: string, status: Escalation["status"]) {
+  const supabase = await client();
+  const { data, error } = await supabase.from("escalations").select("id, project_id").eq("id", id).maybeSingle();
+  raise(error);
+  if (!data) throw new PortalError("That escalation was not found.");
+  await visibleProject(user, text(data.project_id));
+  if (!can(user, "projects.manage") && !can(user, "projects.view_all") && !can(user, "tasks.manage")) {
+    throw new PortalError("You cannot update that escalation.");
+  }
+  const { error: updateError } = await supabase.from("escalations").update({ status }).eq("id", id);
+  raise(updateError);
+  await trail(user, "escalation.status", "escalation", id, `Set escalation to ${status.replaceAll("_", " ")}.`);
+}
+
+export async function saveWorkstream(user: SessionUser, input: { id: string; ownerName: string; targetDate: string; status: Workstream["status"] }) {
+  if (!can(user, "projects.manage") && !can(user, "projects.view_all")) throw new PortalError("You cannot update workstreams.");
+  const supabase = await client();
+  const { error } = await supabase.from("workstreams").update({ owner_name: input.ownerName, target_date: uuid(input.targetDate), status: input.status }).eq("id", input.id);
+  raise(error);
+}
+
+export async function projectFile(user: SessionUser, id: string): Promise<{ name: string; type: string; bytes: Uint8Array }> {
+  const supabase = await client();
+  const { data, error } = await supabase.from("project_files").select("id, project_id, file_name, storage_path").eq("id", id).maybeSingle();
+  raise(error);
+  if (!data) throw new PortalError("That file was not found.");
+  await visibleProject(user, text(data.project_id));
+  const path = text(data.storage_path);
+  if (!path) throw new PortalError("That file has no stored copy.");
+  const admin = createServiceClient();
+  if (!admin) throw new PortalError("Set SUPABASE_SERVICE_ROLE_KEY to download project files.");
+  const downloaded = await admin.storage.from("project-docs").download(path);
+  if (downloaded.error || !downloaded.data) throw new PortalError(downloaded.error?.message || "The file could not be downloaded.");
+  return { name: text(data.file_name), type: downloaded.data.type || "application/octet-stream", bytes: new Uint8Array(await downloaded.data.arrayBuffer()) };
 }
 
 export async function resetDemo(_user?: SessionUser) {

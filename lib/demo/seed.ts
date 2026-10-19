@@ -1,3 +1,4 @@
+import { defaultWorkstreams, sowDefaults } from "@/lib/delivery";
 import { ROLE_PRESETS } from "@/lib/permissions";
 import type { Role, Workspace } from "@/lib/types";
 import { addDays, isoDate, startOfWeek, stamp, todayIso } from "@/lib/dates";
@@ -182,6 +183,15 @@ export function buildSeed(): DemoStore {
       budgetAmount: 1800000,
       currency: "INR",
       ownerId: "usr_vikram",
+      ...sowDefaults(),
+      sowStage: "finalised",
+      activated: true,
+      estimatedHours: 420,
+      deliveryStatus: "in_progress",
+      scope: "Delivery portal for Noble, covering time, billing, and project control.",
+      deliverables: "Role model, timesheet grid, billing cards",
+      invoicingStatus: "Milestone invoiced",
+      paymentStatus: "partially_paid",
     },
     {
       id: "prj_inventory",
@@ -196,6 +206,14 @@ export function buildSeed(): DemoStore {
       budgetAmount: 950000,
       currency: "INR",
       ownerId: "usr_vikram",
+      ...sowDefaults(),
+      sowStage: "finalised",
+      activated: true,
+      estimatedHours: 280,
+      billingTerms: "fixed_fee",
+      deliveryStatus: "in_progress",
+      scope: "Stock, purchase, and store-sync services.",
+      risks: "Nightly sync still needs a retry window.",
     },
     {
       id: "prj_claims",
@@ -210,6 +228,12 @@ export function buildSeed(): DemoStore {
       budgetAmount: 720000,
       currency: "INR",
       ownerId: "usr_ananya",
+      ...sowDefaults(),
+      estimatedHours: 160,
+      source: "proposal",
+      scope: "Case intake and document checks.",
+      pendingActions: "Admin to finalise the SOW.",
+      risks: "Scope is not frozen.",
     },
   ];
 
@@ -242,13 +266,13 @@ export function buildSeed(): DemoStore {
   ];
 
   const tasks: DemoStore["tasks"] = [
-    { id: "tk_roles", projectId: "prj_portal", milestoneId: "ms_auth", featureId: "ft_auth", title: "Map director, owner, and member permissions", description: "Confirm which screens each role can open.", assigneeId: "usr_ishaan", status: "review", priority: "high", dueDate: addDays(week, 2), estimatedHours: 8 },
-    { id: "tk_grid", projectId: "prj_portal", milestoneId: "ms_auth", featureId: "ft_time", title: "Weekly timesheet grid", description: "Let members log billable and non-billable hours.", assigneeId: "usr_ishaan", status: "in_progress", priority: "urgent", dueDate: addDays(week, 3), estimatedHours: 12 },
-    { id: "tk_cards", projectId: "prj_portal", milestoneId: "ms_bill", featureId: "ft_invoice", title: "Feature billing cards", description: "Show budget, logged hours, and amount by feature.", assigneeId: "usr_sara", status: "in_progress", priority: "medium", dueDate: addDays(week, 6), estimatedHours: 10 },
-    { id: "tk_empty", projectId: "prj_portal", milestoneId: "ms_bill", featureId: "ft_time", title: "Empty-state illustrations", description: "States for a week with no submitted time.", assigneeId: "usr_sara", status: "backlog", priority: "low", dueDate: addDays(week, 8), estimatedHours: 4 },
-    { id: "tk_sync", projectId: "prj_inventory", milestoneId: "ms_sync", featureId: "ft_stock", title: "Nightly stock snapshot", description: "Write the store sync job and retry policy.", assigneeId: "usr_ishaan", status: "in_progress", priority: "high", dueDate: addDays(week, 5), estimatedHours: 16 },
-    { id: "tk_cases", projectId: "prj_inventory", milestoneId: "ms_sync", featureId: "ft_qa", title: "Regression cases for stock adjustments", description: "Cover negative stock and partial receipts.", assigneeId: "usr_neel", status: "review", priority: "medium", dueDate: addDays(week, 4), estimatedHours: 8 },
-    { id: "tk_intake", projectId: "prj_claims", milestoneId: "ms_intake", featureId: "ft_case", title: "Draft intake checklist", description: "List documents required before a claim is assigned.", assigneeId: "usr_neel", status: "backlog", priority: "medium", dueDate: addDays(week, 12), estimatedHours: 6 },
+    { id: "tk_roles", projectId: "prj_portal", milestoneId: "ms_auth", featureId: "ft_auth", title: "Map director, owner, and member permissions", description: "Confirm which screens each role can open.", assigneeId: "usr_ishaan", status: "review", priority: "high", dueDate: addDays(week, 2), startDate: week, estimatedHours: 8, actualHours: 6 },
+    { id: "tk_grid", projectId: "prj_portal", milestoneId: "ms_auth", featureId: "ft_time", title: "Weekly timesheet grid", description: "Let members log billable and non-billable hours.", assigneeId: "usr_ishaan", status: "in_progress", priority: "urgent", dueDate: addDays(week, 3), startDate: week, estimatedHours: 12, actualHours: 8 },
+    { id: "tk_cards", projectId: "prj_portal", milestoneId: "ms_bill", featureId: "ft_invoice", title: "Feature billing cards", description: "Show budget, logged hours, and amount by feature.", assigneeId: "usr_sara", status: "in_progress", priority: "medium", dueDate: addDays(week, 6), startDate: week, estimatedHours: 10, actualHours: 4 },
+    { id: "tk_empty", projectId: "prj_portal", milestoneId: "ms_bill", featureId: "ft_time", title: "Empty-state illustrations", description: "States for a week with no submitted time.", assigneeId: "usr_sara", status: "backlog", priority: "low", dueDate: addDays(week, 8), startDate: "", estimatedHours: 4, actualHours: 0 },
+    { id: "tk_sync", projectId: "prj_inventory", milestoneId: "ms_sync", featureId: "ft_stock", title: "Nightly stock snapshot", description: "Write the store sync job and retry policy.", assigneeId: "usr_ishaan", status: "in_progress", priority: "high", dueDate: addDays(week, 5), startDate: week, estimatedHours: 16, actualHours: 9 },
+    { id: "tk_cases", projectId: "prj_inventory", milestoneId: "ms_sync", featureId: "ft_qa", title: "Regression cases for stock adjustments", description: "Cover negative stock and partial receipts.", assigneeId: "usr_neel", status: "review", priority: "medium", dueDate: addDays(week, 4), startDate: week, estimatedHours: 8, actualHours: 5 },
+    { id: "tk_intake", projectId: "prj_claims", milestoneId: "ms_intake", featureId: "ft_case", title: "Draft intake checklist", description: "List documents required before a claim is assigned.", assigneeId: "usr_neel", status: "backlog", priority: "medium", dueDate: addDays(week, 12), startDate: "", estimatedHours: 6, actualHours: 0 },
   ];
 
   const older = addDays(todayIso(), -24);
@@ -324,5 +348,10 @@ export function buildSeed(): DemoStore {
     payments,
     notifications,
     audit,
+    escalations: [
+      { id: "esc_1", projectId: "prj_inventory", type: "blocker" as const, description: "Nightly sync retry window is still open.", ownerName: "Vikram Shah", dueDate: addDays(todayIso(), 4), status: "open" as const, createdBy: "usr_vikram", createdAt: stamp() },
+    ],
+    files: [],
+    workstreams: defaultWorkstreams(),
   };
 }

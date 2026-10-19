@@ -15,6 +15,12 @@ export function projectVisible(user: SessionUser, project: Project, members: Pro
   return members.some((member) => member.projectId === project.id && member.userId === user.id);
 }
 
+export function canEditDelivery(user: SessionUser, project: Project) {
+  const owner = project.ownerId === user.id || project.deliveryOwnerId === user.id;
+  if (owner) return can(user, "tasks.manage") || can(user, "projects.manage");
+  return can(user, "projects.view_all") && (can(user, "tasks.manage") || can(user, "projects.manage"));
+}
+
 export function canManageProject(user: SessionUser, project: Project) {
   if (!can(user, "projects.manage") && !can(user, "tasks.manage")) return false;
   if (can(user, "projects.view_all")) return can(user, "projects.manage") || can(user, "tasks.manage");
@@ -71,4 +77,8 @@ export function canApproveProject(user: SessionUser, project: Project) {
 export function canSeeTeamDsr(user: SessionUser, project: Project) {
   if (project.ownerId === user.id) return true;
   return can(user, "projects.view_all");
+}
+
+export function fillsOwnDsr(user: SessionUser) {
+  return user.roleSlug !== "director" && can(user, "timesheets.submit");
 }

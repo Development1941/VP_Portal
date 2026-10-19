@@ -64,6 +64,23 @@ export type Project = {
   budgetAmount: number;
   currency: string;
   ownerId: string;
+  estimatedHours: number;
+  source: "requirement_document" | "proposal" | "meeting_transcript" | "email_thread";
+  sowStage: "draft" | "finalised";
+  deliveryStatus: "in_progress" | "done" | "blocked";
+  billingTerms: "milestone" | "monthly_tm" | "fixed_fee";
+  approvalStatus: "signed" | "pending" | "rejected";
+  renewalDate: string;
+  scope: string;
+  deliverables: string;
+  risks: string;
+  pendingActions: string;
+  deliveryOwnerId: string;
+  invoicingStatus: string;
+  paymentStatus: "paid" | "partially_paid" | "overdue" | "not_due";
+  activated: boolean;
+  sowFileName: string;
+  sowFilePath: string;
 };
 
 export type ProjectMember = {
@@ -107,7 +124,38 @@ export type Task = {
   status: "backlog" | "in_progress" | "review" | "done";
   priority: "low" | "medium" | "high" | "urgent";
   dueDate: string;
+  startDate: string;
   estimatedHours: number;
+  actualHours: number;
+};
+
+export type Escalation = {
+  id: string;
+  projectId: string;
+  type: "blocker" | "concern" | "dependency";
+  description: string;
+  ownerName: string;
+  dueDate: string;
+  status: "open" | "in_review" | "resolved";
+  createdBy: string;
+  createdAt: string;
+};
+
+export type ProjectFile = {
+  id: string;
+  projectId: string;
+  kind: "requirement" | "sow";
+  fileName: string;
+  createdBy: string;
+  createdAt: string;
+};
+
+export type Workstream = {
+  id: string;
+  name: string;
+  ownerName: string;
+  targetDate: string;
+  status: "in_progress" | "blocked" | "done";
 };
 
 export type TimesheetStatus = "draft" | "submitted" | "approved" | "rejected";
@@ -221,6 +269,9 @@ export type Workspace = {
   payments: Payment[];
   notifications: Notification[];
   audit: AuditEntry[];
+  escalations: Escalation[];
+  files: ProjectFile[];
+  workstreams: Workstream[];
 };
 
 export type Result = { error?: string };

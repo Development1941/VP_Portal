@@ -6,6 +6,7 @@ import {
   Activity,
   Bell,
   Building2,
+  ClipboardList,
   Clock3,
   CreditCard,
   FileText,
@@ -15,7 +16,9 @@ import {
   PieChart,
   ScrollText,
   Settings,
+  TriangleAlert,
   Users,
+  UsersRound,
   Wallet,
   type LucideIcon,
 } from "lucide-react";
@@ -23,6 +26,10 @@ import type { NavLink } from "@/lib/nav";
 
 const ICONS: Record<string, LucideIcon> = {
   dashboard: LayoutDashboard,
+  intake: ClipboardList,
+  sow: FileText,
+  resources: UsersRound,
+  alert: TriangleAlert,
   tasks: ListChecks,
   time: Clock3,
   projects: FolderKanban,

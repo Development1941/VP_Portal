@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
-import { can, canApproveProject, canEditTask, canManageProject, canSeeMilestones, canSeeTeamDsr, canUploadMilestones, leadsProject, projectLeads, projectVisible } from "@/lib/access";
+import { can, canApproveProject, canEditDelivery, canEditTask, canManageProject, canSeeMilestones, canSeeTeamDsr, canUploadMilestones, leadsProject, projectLeads, projectVisible } from "@/lib/access";
+import { billingModelFor, defaultWorkstreams, keepDelivery, sowDefaults, statusForDelivery } from "@/lib/delivery";
 import { ALL_PERMISSIONS, type PermissionKey } from "@/lib/permissions";
 import { addDays, stamp, todayIso } from "@/lib/dates";
 import { nid, prettyDate, roundMoney } from "@/lib/format";
@@ -8,17 +9,20 @@ import { PortalError } from "@/lib/form";
 import { nextInvoiceStatus, resolveBillRate } from "@/lib/metrics";
 import type {
   Client,
+  Escalation,
   Feature,
   Invoice,
   Milestone,
   Payment,
   Project,
+  ProjectFile,
   RateCard,
   Role,
   SessionUser,
   Task,
   Timesheet,
   Workspace,
+  Workstream,
 } from "@/lib/types";
 import { buildSeed, type DemoStore, type DemoUser } from "@/lib/demo/seed";
 
@@ -33,7 +37,16 @@ function read(): DemoStore {
   }
   const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as DemoStore;
   if (!parsed.users || !parsed.roles) return buildSeed();
-  return parsed;
+  return hydrate(parsed);
+}
+
+function hydrate(store: DemoStore): DemoStore {
+  store.projects = (store.projects ?? []).map((project) => ({ ...sowDefaults(), ...project }));
+  store.tasks = (store.tasks ?? []).map((task) => ({ ...task, startDate: task.startDate || "", actualHours: task.actualHours || 0 }));
+  store.escalations = store.escalations ?? [];
+  store.files = store.files ?? [];
+  store.workstreams = store.workstreams?.length ? store.workstreams : defaultWorkstreams();
+  return store;
 }
 
 function write(store: DemoStore) {
@@ -155,12 +168,7 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
       return Boolean(project && canSeeMilestones(user, project, store.members));
     }),
     features: store.features.filter((item) => ids.has(item.projectId)),
-    tasks: store.tasks.filter((item) => {
-      if (!ids.has(item.projectId)) return false;
-      if (can(user, "tasks.manage") || can(user, "projects.view_all") || item.assigneeId === user.id) return true;
-      const project = projects.find((entry) => entry.id === item.projectId);
-      return Boolean(project && leadsProject(user, project, store.members));
-    }),
+    tasks: store.tasks.filter((item) => ids.has(item.projectId)),
     timesheets: store.timesheets.filter((item) => {
       const project = projects.find((entry) => entry.id === item.projectId);
       if (!project) return false;
@@ -172,6 +180,9 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
     payments: seePayments ? store.payments.filter((item) => !item.projectId || ids.has(item.projectId) || can(user, "projects.view_all")) : [],
     notifications: store.notifications.filter((item) => item.userId === user.id),
     audit: seeAudit ? store.audit : [],
+    escalations: (store.escalations ?? []).filter((item) => ids.has(item.projectId)),
+    files: (store.files ?? []).filter((item) => ids.has(item.projectId)),
+    workstreams: store.workstreams ?? [],
   };
 }
 
@@ -203,10 +214,10 @@ export function saveProject(user: SessionUser, input: Project) {
     const existing = store.projects.find((project) => project.id === input.id);
     if (existing) {
       if (!canManageProject(user, existing)) throw new PortalError("You can edit only projects you own.");
-      Object.assign(existing, input);
+      Object.assign(existing, keepDelivery(existing, input));
     } else {
       const id = input.id || nid("prj");
-      store.projects.unshift({ ...input, id });
+      store.projects.unshift({ ...sowDefaults(), ...input, id });
       if (!store.members.some((member) => member.projectId === id && member.userId === input.ownerId)) {
         store.members.push({ projectId: id, userId: input.ownerId, memberRole: "Owner", billRate: 0 });
       }
@@ -299,7 +310,7 @@ export function saveFeature(user: SessionUser, input: Feature) {
   });
 }
 
-export function saveTask(user: SessionUser, input: Task) {
+export function saveTask(user: SessionUser, input: Task & { recordActual?: boolean }) {
   return mutate((store) => {
     const project = requireProject(store, input.projectId);
     const managing = can(user, "tasks.manage") && canManageProject(user, project);
@@ -312,8 +323,9 @@ export function saveTask(user: SessionUser, input: Task) {
     if (!managing && !selfServe) throw new PortalError("You cannot add that task.");
     if (!input.title) throw new PortalError("Task title is required.");
     const existing = store.tasks.find((item) => item.id === input.id);
-    if (existing) Object.assign(existing, input);
-    else store.tasks.unshift({ ...input, id: nid("tk") });
+    if (existing) {
+      Object.assign(existing, input.recordActual ? input : { ...input, startDate: existing.startDate, actualHours: existing.actualHours });
+    } else store.tasks.unshift({ ...input, id: nid("tk"), startDate: input.startDate || "", actualHours: input.actualHours || 0 });
     const assignee = store.users.find((person) => person.id === input.assigneeId);
     if (assignee && assignee.id !== user.id) {
       notify(store, assignee.id, "Task assigned", `${input.title} on ${project.name}.`, `/projects/${project.id}`);
@@ -346,6 +358,7 @@ function assertTimesheet(input: Timesheet) {
 }
 
 export function saveTimesheet(user: SessionUser, input: Timesheet) {
+  if (user.roleSlug === "director") throw new PortalError("The director reads DSR. They do not file one.");
   if (!can(user, "timesheets.submit")) throw new PortalError("You cannot submit timesheets.");
   assertTimesheet(input);
   return mutate((store) => {
@@ -695,6 +708,217 @@ export function markNotifications(user: SessionUser, id: string) {
       if (item.userId === user.id && (id === "all" || item.id === id)) item.read = true;
     }
   });
+}
+
+function rememberFile(store: DemoStore, user: SessionUser, projectId: string, kind: ProjectFile["kind"], file: File) {
+  if (!file || file.size === 0) return;
+  store.files.unshift({
+    id: nid("file"),
+    projectId,
+    kind,
+    fileName: file.name,
+    createdBy: user.id,
+    createdAt: stamp(),
+  });
+}
+
+export async function submitIntake(
+  user: SessionUser,
+  input: { clientName: string; name: string; estimatedHours: number; startDate: string; ownerId: string; source: Project["source"]; summary: string },
+  files: File[],
+) {
+  if (!can(user, "projects.manage")) throw new PortalError("You cannot submit a project intake.");
+  if (!input.name.trim()) throw new PortalError("Project name is required.");
+  let projectId = "";
+  await mutate((store) => {
+    const company = input.clientName.trim();
+    if (!company) throw new PortalError("Client name is required.");
+    let client = store.clients.find((item) => item.company.toLowerCase() === company.toLowerCase() || item.name.toLowerCase() === company.toLowerCase());
+    if (!client) {
+      client = { id: nid("cli"), name: company, company, email: "", phone: "", billingEmail: "", address: "", taxId: "", currency: "INR", status: "active", notes: "" };
+      store.clients.unshift(client);
+    }
+    const ownerId = can(user, "projects.view_all") ? input.ownerId || user.id : user.id;
+    projectId = nid("prj");
+    store.projects.unshift({
+      ...sowDefaults(),
+      id: projectId,
+      clientId: client.id,
+      name: input.name.trim(),
+      code: input.name.trim().replace(/\s+/g, "-").slice(0, 16).toUpperCase(),
+      description: input.summary.trim(),
+      status: "planning",
+      billingModel: "hourly",
+      startDate: input.startDate,
+      endDate: "",
+      budgetAmount: 0,
+      currency: "INR",
+      ownerId,
+      estimatedHours: input.estimatedHours,
+      source: input.source,
+    });
+    store.members.push({ projectId, userId: ownerId, memberRole: "Owner", billRate: 0 });
+    for (const file of files) rememberFile(store, user, projectId, "requirement", file);
+    audit(store, user, "project.intake", "project", projectId, `Submitted intake ${input.name.trim()}.`);
+  });
+  return projectId;
+}
+
+export function saveSow(user: SessionUser, input: Project) {
+  return mutate((store) => {
+    const existing = requireProject(store, input.id);
+    if (!projectVisible(user, existing, store.members)) throw new PortalError("That project is outside your access.");
+    if (!canManageProject(user, existing) && !can(user, "projects.view_all")) throw new PortalError("You cannot finalise this SOW.");
+    Object.assign(existing, {
+      name: input.name,
+      clientId: input.clientId,
+      description: input.description,
+      budgetAmount: input.budgetAmount,
+      billingTerms: input.billingTerms,
+      billingModel: billingModelFor(input.billingTerms),
+      startDate: input.startDate,
+      endDate: input.endDate,
+      approvalStatus: input.approvalStatus,
+      renewalDate: input.renewalDate,
+      scope: input.scope,
+      deliverables: input.deliverables,
+      risks: input.risks,
+      pendingActions: input.pendingActions,
+      ownerId: input.ownerId || existing.ownerId,
+      deliveryOwnerId: input.deliveryOwnerId,
+      estimatedHours: input.estimatedHours,
+      invoicingStatus: input.invoicingStatus || "Not invoiced",
+      paymentStatus: input.paymentStatus,
+    });
+    audit(store, user, "project.sow", "project", existing.id, `Updated the SOW for ${input.name}.`);
+  });
+}
+
+export function setDeliveryStatus(user: SessionUser, projectId: string, deliveryStatus: Project["deliveryStatus"]) {
+  return mutate((store) => {
+    const project = requireProject(store, projectId);
+    if (!projectVisible(user, project, store.members)) throw new PortalError("That project is outside your access.");
+    if (!canManageProject(user, project) && !can(user, "projects.view_all")) throw new PortalError("You cannot change this project status.");
+    project.deliveryStatus = deliveryStatus;
+    project.status = statusForDelivery(deliveryStatus, project.activated);
+    audit(store, user, "project.status", "project", projectId, `Set ${project.name} to ${deliveryStatus.replaceAll("_", " ")}.`);
+  });
+}
+
+export async function uploadSowFile(user: SessionUser, projectId: string, file: File) {
+  if (!(file instanceof File) || file.size === 0) throw new PortalError("Choose a SOW PDF.");
+  if (!file.name.toLowerCase().endsWith(".pdf")) throw new PortalError("The SOW file must be a PDF.");
+  return mutate((store) => {
+    const project = requireProject(store, projectId);
+    if (!projectVisible(user, project, store.members)) throw new PortalError("That project is outside your access.");
+    rememberFile(store, user, projectId, "sow", file);
+    project.sowFileName = file.name;
+    audit(store, user, "project.sow_file", "project", projectId, `Attached the SOW for ${project.name}.`);
+  });
+}
+
+export function finaliseSow(user: SessionUser, projectId: string) {
+  return mutate((store) => {
+    const project = requireProject(store, projectId);
+    if (!projectVisible(user, project, store.members)) throw new PortalError("That project is outside your access.");
+    if (!canManageProject(user, project) && !can(user, "projects.view_all")) throw new PortalError("You cannot finalise this SOW.");
+    project.sowStage = "finalised";
+    audit(store, user, "project.finalise", "project", projectId, `Finalised the SOW for ${project.name}.`);
+    notify(store, project.ownerId, "SOW finalised", `${project.name} can now be staffed.`, "/resources");
+  });
+}
+
+export function activateProject(user: SessionUser, projectId: string) {
+  return mutate((store) => {
+    const project = requireProject(store, projectId);
+    if (project.sowStage !== "finalised") throw new PortalError("Finalise the SOW before activating the project.");
+    if (!canManageProject(user, project) && !can(user, "tasks.manage")) throw new PortalError("You cannot activate this project.");
+    project.activated = true;
+    project.status = "active";
+    if (project.deliveryStatus !== "done") project.deliveryStatus = "in_progress";
+    audit(store, user, "project.activate", "project", projectId, `Activated ${project.name} for delivery.`);
+  });
+}
+
+export function saveDeliverySheet(
+  user: SessionUser,
+  projectId: string,
+  rows: { id: string; title: string; assigneeId: string; startDate: string; dueDate: string; estimatedHours: number; actualHours: number }[],
+) {
+  return mutate((store) => {
+    const project = requireProject(store, projectId);
+    if (!project.activated) throw new PortalError("Activate the project before editing tasks.");
+    if (!canEditDelivery(user, project)) throw new PortalError("Only the project owner can edit these tasks.");
+    for (const row of rows) {
+      const task = store.tasks.find((item) => item.id === row.id && item.projectId === projectId);
+      if (!task || !row.title.trim()) continue;
+      Object.assign(task, {
+        title: row.title.trim(),
+        assigneeId: row.assigneeId,
+        startDate: row.startDate,
+        dueDate: row.dueDate,
+        estimatedHours: row.estimatedHours,
+        actualHours: row.actualHours,
+      });
+    }
+    audit(store, user, "task.sheet", "project", projectId, `Updated the task sheet for ${project.name}.`);
+  });
+}
+
+export function raiseEscalation(
+  user: SessionUser,
+  input: { projectId: string; type: Escalation["type"]; description: string; ownerName: string; dueDate: string },
+) {
+  return mutate((store) => {
+    const project = requireProject(store, input.projectId);
+    if (!projectVisible(user, project, store.members)) throw new PortalError("That project is outside your access.");
+    if (!input.description.trim()) throw new PortalError("Describe the issue and the support needed.");
+    store.escalations.unshift({
+      id: nid("esc"),
+      projectId: project.id,
+      type: input.type,
+      description: input.description.trim(),
+      ownerName: input.ownerName.trim() || user.fullName,
+      dueDate: input.dueDate,
+      status: "open",
+      createdBy: user.id,
+      createdAt: stamp(),
+    });
+    audit(store, user, "escalation.raise", "project", project.id, `Raised a ${input.type} on ${project.name}.`);
+    notify(store, project.ownerId, "Escalation raised", `${user.fullName} raised a ${input.type} on ${project.name}.`, "/escalations");
+  });
+}
+
+export function setEscalationStatus(user: SessionUser, id: string, status: Escalation["status"]) {
+  return mutate((store) => {
+    const item = store.escalations.find((entry) => entry.id === id);
+    if (!item) throw new PortalError("That escalation was not found.");
+    const project = requireProject(store, item.projectId);
+    if (!projectVisible(user, project, store.members)) throw new PortalError("That project is outside your access.");
+    if (!can(user, "projects.manage") && !can(user, "projects.view_all") && !can(user, "tasks.manage")) throw new PortalError("You cannot update that escalation.");
+    item.status = status;
+    audit(store, user, "escalation.status", "escalation", id, `Set escalation to ${status.replaceAll("_", " ")}.`);
+  });
+}
+
+export function saveWorkstream(user: SessionUser, input: { id: string; ownerName: string; targetDate: string; status: Workstream["status"] }) {
+  if (!can(user, "projects.manage") && !can(user, "projects.view_all")) throw new PortalError("You cannot update workstreams.");
+  return mutate((store) => {
+    const item = store.workstreams.find((entry) => entry.id === input.id);
+    if (!item) throw new PortalError("That workstream was not found.");
+    item.ownerName = input.ownerName;
+    item.targetDate = input.targetDate;
+    item.status = input.status;
+  });
+}
+
+export async function projectFile(user: SessionUser, id: string): Promise<{ name: string; type: string; bytes: Uint8Array }> {
+  const store = read();
+  const file = store.files.find((item) => item.id === id);
+  if (!file) throw new PortalError("That file was not found.");
+  const project = requireProject(store, file.projectId);
+  if (!projectVisible(user, project, store.members)) throw new PortalError("That project is outside your access.");
+  throw new PortalError("Demo mode keeps the file name only. Connect Supabase to store the original.");
 }
 
 export function resetDemo(user: SessionUser) {

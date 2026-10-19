@@ -589,6 +589,7 @@ create policy tasks_read on public.tasks for select to authenticated
     public.visible_project(project_id)
     and (
       assignee_id = auth.uid()
+      or public.has_permission('tasks.view')
       or public.has_permission('tasks.manage')
       or public.has_permission('projects.view_all')
       or exists (select 1 from public.projects p where p.id = project_id and p.owner_id = auth.uid())
@@ -696,5 +697,132 @@ drop function if exists public.can_manage_project(uuid);
 drop function if exists public.can_approve_project(uuid);
 
 revoke all on all tables in schema public from anon;
+
+-- Delivery control: intake, SOW finalisation, activation, escalations, and workstreams.
+alter table public.projects add column if not exists estimated_hours numeric not null default 0;
+alter table public.projects add column if not exists source text not null default 'requirement_document';
+alter table public.projects add column if not exists sow_stage text not null default 'draft';
+alter table public.projects add column if not exists delivery_status text not null default 'in_progress';
+alter table public.projects add column if not exists billing_terms text not null default 'milestone';
+alter table public.projects add column if not exists approval_status text not null default 'pending';
+alter table public.projects add column if not exists renewal_date date;
+alter table public.projects add column if not exists scope text not null default '';
+alter table public.projects add column if not exists deliverables text not null default '';
+alter table public.projects add column if not exists risks text not null default '';
+alter table public.projects add column if not exists pending_actions text not null default '';
+alter table public.projects add column if not exists delivery_owner_id uuid references public.profiles(id);
+alter table public.projects add column if not exists invoicing_status text not null default 'Not invoiced';
+alter table public.projects add column if not exists payment_status text not null default 'not_due';
+alter table public.projects add column if not exists activated boolean not null default false;
+alter table public.projects add column if not exists sow_file_name text not null default '';
+alter table public.projects add column if not exists sow_file_path text not null default '';
+alter table public.tasks add column if not exists start_date date;
+alter table public.tasks add column if not exists actual_hours numeric not null default 0;
+
+alter table public.projects drop constraint if exists projects_source_check;
+alter table public.projects add constraint projects_source_check check (source in ('requirement_document', 'proposal', 'meeting_transcript', 'email_thread'));
+alter table public.projects drop constraint if exists projects_sow_stage_check;
+alter table public.projects add constraint projects_sow_stage_check check (sow_stage in ('draft', 'finalised'));
+alter table public.projects drop constraint if exists projects_delivery_status_check;
+alter table public.projects add constraint projects_delivery_status_check check (delivery_status in ('in_progress', 'done', 'blocked'));
+alter table public.projects drop constraint if exists projects_billing_terms_check;
+alter table public.projects add constraint projects_billing_terms_check check (billing_terms in ('milestone', 'monthly_tm', 'fixed_fee'));
+alter table public.projects drop constraint if exists projects_approval_status_check;
+alter table public.projects add constraint projects_approval_status_check check (approval_status in ('signed', 'pending', 'rejected'));
+alter table public.projects drop constraint if exists projects_payment_status_check;
+alter table public.projects add constraint projects_payment_status_check check (payment_status in ('paid', 'partially_paid', 'overdue', 'not_due'));
+
+update public.projects
+set delivery_status = case status when 'completed' then 'done' when 'on_hold' then 'blocked' else delivery_status end
+where status in ('completed', 'on_hold') and delivery_status = 'in_progress';
+
+update public.projects p
+set estimated_hours = coalesce((select sum(t.estimated_hours) from public.tasks t where t.project_id = p.id), 0)
+where p.estimated_hours = 0
+  and exists (select 1 from public.tasks t where t.project_id = p.id);
+
+update public.projects
+set sow_stage = 'finalised', activated = true
+where status = 'active' and sow_stage = 'draft' and activated = false;
+
+create table if not exists public.escalations (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  type text not null check (type in ('blocker', 'concern', 'dependency')),
+  description text not null default '',
+  owner_name text not null default '',
+  due_date date,
+  status text not null default 'open' check (status in ('open', 'in_review', 'resolved')),
+  created_by uuid references public.profiles(id),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.project_files (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  kind text not null check (kind in ('requirement', 'sow')),
+  file_name text not null,
+  storage_path text not null default '',
+  created_by uuid references public.profiles(id),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.workstreams (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  owner_name text not null default '',
+  target_date date,
+  status text not null default 'in_progress' check (status in ('in_progress', 'blocked', 'done'))
+);
+
+insert into public.workstreams (name, owner_name, target_date, status)
+values
+  ('Project intake', 'Intake desk', '2026-10-14', 'in_progress'),
+  ('SOW management', 'Admin desk', '2026-10-18', 'in_progress'),
+  ('Resource allocation', 'Project owner', '2026-10-20', 'in_progress'),
+  ('Delivery & tasks', 'Delivery owner', '2026-10-25', 'blocked'),
+  ('Billing & utilization', 'Finance ops', '2026-10-28', 'in_progress'),
+  ('Escalations & blockers', 'VP office', '2026-10-15', 'done')
+on conflict (name) do nothing;
+
+grant select, insert, update, delete on public.escalations, public.project_files, public.workstreams to authenticated;
+
+alter table public.escalations enable row level security;
+alter table public.project_files enable row level security;
+alter table public.workstreams enable row level security;
+
+drop policy if exists escalations_read on public.escalations;
+create policy escalations_read on public.escalations for select to authenticated
+  using (public.visible_project(project_id));
+drop policy if exists escalations_insert on public.escalations;
+create policy escalations_insert on public.escalations for insert to authenticated
+  with check (public.visible_project(project_id) and created_by = auth.uid());
+drop policy if exists escalations_update on public.escalations;
+create policy escalations_update on public.escalations for update to authenticated
+  using (
+    public.visible_project(project_id)
+    and (
+      public.has_permission('projects.manage')
+      or public.has_permission('projects.view_all')
+      or public.has_permission('tasks.manage')
+    )
+  );
+
+drop policy if exists files_read on public.project_files;
+create policy files_read on public.project_files for select to authenticated
+  using (public.visible_project(project_id));
+drop policy if exists files_write on public.project_files;
+create policy files_write on public.project_files for insert to authenticated
+  with check (
+    public.visible_project(project_id)
+    and (public.has_permission('projects.manage') or public.has_permission('tasks.manage'))
+  );
+
+drop policy if exists workstreams_read on public.workstreams;
+create policy workstreams_read on public.workstreams for select to authenticated
+  using (public.has_permission('dashboard.view') or public.has_permission('projects.view') or public.has_permission('projects.view_all'));
+drop policy if exists workstreams_write on public.workstreams;
+create policy workstreams_write on public.workstreams for update to authenticated
+  using (public.has_permission('projects.manage') or public.has_permission('projects.view_all'));
 
 notify pgrst, 'reload schema';
