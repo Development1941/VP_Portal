@@ -2,6 +2,7 @@ import { saveStaffAction } from "@/app/actions";
 import { ActionForm, Submit } from "@/components/common/forms";
 import { Badge, Denied, PageHeader } from "@/components/common/ui";
 import { can } from "@/lib/access";
+import { showCommercials } from "@/lib/commercial";
 import { money } from "@/lib/format";
 import { requirePage } from "@/lib/page";
 
@@ -11,7 +12,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
   const query = await searchParams;
   const editing = data.users.find((person) => person.id === query.edit);
   const manage = can(user, "team.manage");
-  const showCost = manage || can(user, "reports.financial");
+  const showCost = showCommercials && (manage || can(user, "reports.financial"));
 
   return (
     <>
@@ -48,7 +49,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
             <label className="field"><span>Phone</span><input name="phone" defaultValue={editing?.phone} /></label>
             <label className="field">
               <span>Role</span>
-              <select name="roleId" defaultValue={editing?.roleId || data.roles.find((role) => role.slug === "team_member")?.id}>
+              <select name="roleId" defaultValue={editing?.roleId || data.roles.find((role) => role.slug === "developer")?.id}>
                 {data.roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
               </select>
             </label>
@@ -60,7 +61,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
                 <option value="inactive">Inactive</option>
               </select>
             </label>
-            <label className="field"><span>Internal hourly cost ({data.currency})</span><input type="number" name="hourlyCost" min="0" defaultValue={editing?.hourlyCost ?? 0} /></label>
+            {showCost ? <label className="field"><span>Internal hourly cost ({data.currency})</span><input type="number" name="hourlyCost" min="0" defaultValue={editing?.hourlyCost ?? 0} /></label> : <input type="hidden" name="hourlyCost" value={editing?.hourlyCost ?? 0} />}
             <label className="field"><span>{editing ? "New password" : "Password"}</span><input type="password" name="password" placeholder={editing ? "Leave blank to keep" : "At least 6 characters"} autoComplete="new-password" /></label>
             <Submit>{editing ? "Save member" : "Add member"}</Submit>
           </ActionForm>

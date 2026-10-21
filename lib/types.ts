@@ -81,6 +81,9 @@ export type Project = {
   activated: boolean;
   sowFileName: string;
   sowFilePath: string;
+  initiatedById: string;
+  initiatedFor: string;
+  initiatedFrom: string;
 };
 
 export type ProjectMember = {
@@ -252,8 +255,27 @@ export type AuditEntry = {
   createdAt: string;
 };
 
+export type FxRate = {
+  id: string;
+  from: string;
+  to: string;
+  rate: number;
+  source: string;
+  recordedAt: string;
+};
+
+export type StatusUpdate = {
+  sheetNo: number;
+  project: string;
+  subItem: string;
+  status: string;
+  remarks: string;
+  statusDate: string;
+};
+
 export type Workspace = {
   currency: string;
+  fxRates: FxRate[];
   users: DirectoryUser[];
   roles: Role[];
   grants: { roleId: string; permission: PermissionKey }[];
@@ -273,6 +295,7 @@ export type Workspace = {
   escalations: Escalation[];
   files: ProjectFile[];
   workstreams: Workstream[];
+  statusUpdates: StatusUpdate[];
 };
 
 export type Result = { error?: string };

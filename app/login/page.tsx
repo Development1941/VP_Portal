@@ -5,9 +5,13 @@ import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { isSupabaseConfigured } from "@/lib/env";
 
 const ACCOUNTS = [
-  { preset: "director", role: "Director", email: "director@embee.local", note: "Full studio access" },
-  { preset: "owner", role: "Project owner", email: "owner@embee.local", note: "Delivery and approvals" },
-  { preset: "member", role: "Team member", email: "ishaan@embee.local", note: "Tasks and timesheets" },
+  { preset: "director", role: "Director / Super admin", email: "director@embee.local", note: "Harshit Bansal" },
+  { preset: "owner", role: "Admin", email: "owner@embee.local", note: "GSVK SAI" },
+  { preset: "manager", role: "Project Manager / PO", email: "manav@embee.local", note: "Manav Singal" },
+  { preset: "scrum", role: "Scrum Master", email: "sm@embee.local", note: "Kaushik" },
+  { preset: "client", role: "Client", email: "rakhee@embee.local", note: "Rakhee" },
+  { preset: "brian", role: "Client", email: "brian@embee.local", note: "Brian" },
+  { preset: "member", role: "Developer", email: "ishaan@embee.local", note: "Bhuvin Singla" },
 ];
 
 export default function LoginPage() {

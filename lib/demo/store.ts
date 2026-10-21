@@ -1,10 +1,11 @@
 import fs from "fs";
 import path from "path";
-import { can, canApproveProject, canEditDelivery, canEditTask, canManageProject, canSeeMilestones, canSeeTeamDsr, canUploadMilestones, projectLeads, projectVisible } from "@/lib/access";
-import { billingModelFor, defaultWorkstreams, keepDelivery, sowDefaults, statusForDelivery } from "@/lib/delivery";
-import { ALL_PERMISSIONS, type PermissionKey } from "@/lib/permissions";
+import { can, canApproveProject, canEditDelivery, canEditTask, canFileIntake, canManageProject, canSeeMilestones, canSeeTeamDsr, canUploadMilestones, projectLeads, projectVisible } from "@/lib/access";
+import { assertIntake, billingModelFor, clientForProfile, defaultWorkstreams, isIntakeOwner, keepDelivery, sowDefaults, statusForDelivery, type IntakeRequest } from "@/lib/delivery";
+import { ALL_PERMISSIONS, ROLE_PRESETS, type PermissionKey } from "@/lib/permissions";
 import { addDays, stamp, todayIso } from "@/lib/dates";
 import { currencyCode, isCurrency } from "@/lib/currency";
+import { convertMoney, crossRate, marketBoard } from "@/lib/fx";
 import { nid, prettyDate, roundMoney } from "@/lib/format";
 import { PortalError } from "@/lib/form";
 import { nextInvoiceStatus, resolveBillRate } from "@/lib/metrics";
@@ -25,6 +26,7 @@ import type {
   Workspace,
   Workstream,
 } from "@/lib/types";
+import { STATUS_UPDATES } from "@/lib/demo/status-board";
 import { buildSeed, type DemoStore, type DemoUser } from "@/lib/demo/seed";
 
 const filePath = path.join(process.cwd(), ".data", "store.json");
@@ -48,7 +50,150 @@ function hydrate(store: DemoStore): DemoStore {
   store.files = store.files ?? [];
   store.workstreams = store.workstreams?.length ? store.workstreams : defaultWorkstreams();
   store.currency = currencyCode(store.currency);
+  store.fxRates = store.fxRates ?? [];
+  if (!store.organizations?.length) {
+    store.organizations = [
+      { id: "org_embee", name: "EMBEE", status: "active" },
+      { id: "org_hanu", name: "Hanu.AI", status: "active" },
+    ];
+  }
+  ensureIntakeAccess(store);
   return store;
+}
+
+function ensureStudioRoles(store: DemoStore) {
+  const member = store.roles.find((role) => role.slug === "team_member");
+  if (member) {
+    member.name = "Developer";
+    member.slug = "developer";
+    member.description = "Logs tasks and timesheets on assigned projects.";
+  }
+  if (!store.roles.some((role) => role.slug === "admin")) {
+    store.roles.push({
+      id: "role_admin",
+      name: "Admin",
+      slug: "admin",
+      description: "Administers the studio. The director stays the locked super admin.",
+      isSystem: true,
+      locked: false,
+    });
+  }
+  const admin = store.roles.find((role) => role.slug === "admin");
+  if (admin) {
+    for (const permission of ROLE_PRESETS.admin) {
+      if (!store.grants.some((grant) => grant.roleId === admin.id && grant.permission === permission)) {
+        store.grants.push({ roleId: admin.id, permission });
+      }
+    }
+  }
+  for (const user of store.users) {
+    if (user.roleSlug === "team_member") {
+      user.roleSlug = "developer";
+      user.roleName = "Developer";
+    }
+  }
+  const sai = store.users.find((user) => user.email.toLowerCase() === "owner@embee.local" || user.fullName.toLowerCase().includes("gsvk"));
+  if (sai && admin) {
+    sai.roleId = admin.id;
+    sai.roleName = "Admin";
+    sai.roleSlug = "admin";
+    sai.title = "Admin";
+  }
+  const director = store.roles.find((role) => role.slug === "director");
+  if (director) director.name = "Director / Super admin";
+  const owner = store.roles.find((role) => role.slug === "project_owner");
+  if (owner) {
+    owner.name = "Project Manager / PO";
+    owner.description = "Runs projects, intake, tasks, milestones, and approvals.";
+    for (const permission of ROLE_PRESETS.project_owner) {
+      if (!store.grants.some((grant) => grant.roleId === owner.id && grant.permission === permission)) {
+        store.grants.push({ roleId: owner.id, permission });
+      }
+    }
+  }
+}
+
+function ensureIntakeAccess(store: DemoStore) {
+  ensureStudioRoles(store);
+  const roles: Role[] = [
+    { id: "role_pm", name: "Project Manager", slug: "project_manager", description: "Files a new project request and hands it to the SOW team.", isSystem: true, locked: false },
+    { id: "role_client", name: "Client", slug: "client", description: "Submits a project request with the requirement documents.", isSystem: true, locked: false },
+  ];
+  for (const role of roles) {
+    if (!store.roles.some((item) => item.slug === role.slug || item.id === role.id)) store.roles.push(role);
+  }
+  const additions = [
+    { slug: "project_owner", permission: "projects.intake" as const },
+    ...ROLE_PRESETS.project_manager.map((permission) => ({ slug: "project_manager", permission })),
+    ...ROLE_PRESETS.client.map((permission) => ({ slug: "client", permission })),
+  ];
+  for (const item of additions) {
+    const role = store.roles.find((entry) => entry.slug === item.slug);
+    if (!role || store.grants.some((grant) => grant.roleId === role.id && grant.permission === item.permission)) continue;
+    store.grants.push({ roleId: role.id, permission: item.permission });
+  }
+  const ownerRole = store.roles.find((role) => role.slug === "project_owner");
+  const scrum = store.roles.find((role) => role.slug === "scrum_master");
+  const clientRole = store.roles.find((role) => role.slug === "client");
+  const people: DemoUser[] = [
+    { id: "usr_manav", fullName: "Manav Singal", email: "manav@embee.local", password: "demo123", title: "Project Manager / PO", phone: "", roleId: ownerRole?.id || "role_owner", roleName: "Project Manager / PO", roleSlug: "project_owner", status: "active", hourlyCost: 0 },
+    { id: "usr_kaushik", fullName: "Kaushik", email: "sm@embee.local", password: "demo123", title: "Scrum Master", phone: "", roleId: scrum?.id || "role_sm", roleName: "Scrum Master", roleSlug: "scrum_master", status: "active", hourlyCost: 0 },
+    { id: "usr_rakhee", fullName: "Rakhee", email: "rakhee@embee.local", password: "demo123", title: "Client", phone: "", roleId: clientRole?.id || "role_client", roleName: "Client", roleSlug: "client", status: "active", hourlyCost: 0 },
+    { id: "usr_brian", fullName: "Brian", email: "brian@embee.local", password: "demo123", title: "Client", phone: "", roleId: clientRole?.id || "role_client", roleName: "Client", roleSlug: "client", status: "active", hourlyCost: 0 },
+  ];
+  for (const person of people) {
+    const existing = store.users.find((user) => user.id === person.id || user.email.toLowerCase() === person.email);
+    if (!existing) store.users.push(person);
+    else {
+      existing.fullName = person.fullName;
+      existing.title = person.title;
+      existing.roleId = person.roleId;
+      existing.roleName = person.roleName;
+      existing.roleSlug = person.roleSlug;
+      existing.status = "active";
+    }
+  }
+  const retired = new Set(["sara@embee.local", "neel@embee.local", "pm@embee.local", "client@embee.local"]);
+  const removed = new Set(store.users.filter((user) => retired.has(user.email.toLowerCase())).map((user) => user.id));
+  if (removed.size) {
+    store.users = store.users.filter((user) => !removed.has(user.id));
+    store.timesheets = store.timesheets.filter((item) => !removed.has(item.userId));
+    store.tasks = store.tasks.map((item) => (removed.has(item.assigneeId) ? { ...item, assigneeId: "" } : item));
+    store.members = store.members.filter((item) => !removed.has(item.userId));
+    store.notifications = store.notifications.filter((item) => !removed.has(item.userId));
+    store.payments = store.payments.map((item) => (removed.has(item.userId) ? { ...item, userId: "" } : item));
+  }
+  const harshit = store.users.find((user) => user.email.toLowerCase() === "director@embee.local");
+  if (harshit) {
+    harshit.fullName = "Harshit Bansal";
+    harshit.title = "Super admin";
+    harshit.roleName = "Director / Super admin";
+    harshit.roleSlug = "director";
+  }
+  if (!store.costsCleared) {
+    for (const user of store.users) user.hourlyCost = 0;
+    store.costsCleared = true;
+    write(store);
+  }
+  if (!store.rosterApplied) {
+    store.clients = [];
+    store.projects = [];
+    store.members = [];
+    store.milestones = [];
+    store.features = [];
+    store.tasks = [];
+    store.timesheets = [];
+    store.rates = [];
+    store.invoices = [];
+    store.lines = [];
+    store.payments = [];
+    store.notifications = [];
+    store.audit = [];
+    store.escalations = [];
+    store.files = [];
+    store.rosterApplied = true;
+    write(store);
+  }
 }
 
 function studioCurrency(store: DemoStore) {
@@ -190,6 +335,8 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
     escalations: (store.escalations ?? []).filter((item) => ids.has(item.projectId)),
     files: (store.files ?? []).filter((item) => ids.has(item.projectId)),
     workstreams: store.workstreams ?? [],
+    fxRates: store.fxRates ?? [],
+    statusUpdates: STATUS_UPDATES,
   };
 }
 
@@ -579,16 +726,44 @@ export function savePayment(user: SessionUser, input: Payment) {
   });
 }
 
-export function saveStudioCurrency(user: SessionUser, currency: string) {
+export async function saveStudioCurrency(user: SessionUser, currency: string) {
   if (!can(user, "settings.manage")) throw new PortalError("You cannot change the studio currency.");
   if (!isCurrency(currency)) throw new PortalError("Choose a supported currency.");
+  const current = studioCurrency(read());
+  if (current === currency) return;
+  const board = await marketBoard();
+  const rate = crossRate(board.quotes, current, currency);
   return mutate((store) => {
+    const scale = (amount: number) => convertMoney(amount, rate);
+    for (const person of store.users) person.hourlyCost = scale(person.hourlyCost);
+    for (const project of store.projects) project.budgetAmount = scale(project.budgetAmount);
+    for (const member of store.members) member.billRate = scale(member.billRate);
+    for (const milestone of store.milestones) milestone.amount = scale(milestone.amount);
+    for (const feature of store.features) {
+      feature.hourlyRate = scale(feature.hourlyRate);
+      feature.fixedAmount = scale(feature.fixedAmount);
+    }
+    for (const card of store.rates) card.hourlyRate = scale(card.hourlyRate);
+    for (const line of store.lines) {
+      line.rate = scale(line.rate);
+      line.amount = scale(line.amount);
+    }
+    for (const payment of store.payments) payment.amount = scale(payment.amount);
     store.currency = currency;
     for (const client of store.clients) client.currency = currency;
     for (const project of store.projects) project.currency = currency;
-    for (const rate of store.rates) rate.currency = currency;
+    for (const card of store.rates) card.currency = currency;
     for (const payment of store.payments) payment.currency = currency;
-    audit(store, user, "studio.currency", "studio", currency, `Set the studio currency to ${currency}.`);
+    store.fxRates = store.fxRates ?? [];
+    store.fxRates.unshift({
+      id: nid("fx"),
+      from: current,
+      to: currency,
+      rate,
+      source: board.source,
+      recordedAt: new Date().toISOString(),
+    });
+    audit(store, user, "studio.currency", "studio", currency, `Converted ${current} to ${currency} at ${rate} (${board.source}, ${board.asOf}).`);
   });
 }
 
@@ -750,23 +925,54 @@ function rememberFile(store: DemoStore, user: SessionUser, projectId: string, ki
   });
 }
 
-export async function submitIntake(
-  user: SessionUser,
-  input: { clientName: string; name: string; estimatedHours: number; startDate: string; ownerId: string; source: Project["source"]; summary: string },
-  files: File[],
-) {
-  if (!can(user, "projects.manage")) throw new PortalError("You cannot submit a project intake.");
-  if (!input.name.trim()) throw new PortalError("Project name is required.");
+export function clientDirectory(user: SessionUser) {
+  if (!canFileIntake(user)) throw new PortalError("You cannot view client profiles.");
+  return read().clients.filter((client) => client.status === "active").sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function organizations(user: SessionUser) {
+  if (!canFileIntake(user)) throw new PortalError("You cannot view organizations.");
+  return read().organizations.filter((item) => item.status === "active").map((item) => item.name).sort((a, b) => a.localeCompare(b));
+}
+
+export function intakeOwners(user: SessionUser) {
+  if (!canFileIntake(user)) throw new PortalError("You cannot view intake owners.");
+  return read()
+    .users.filter((person) => person.status === "active" && isIntakeOwner(person.roleSlug))
+    .map((person) => ({ id: person.id, fullName: person.fullName, roleName: person.roleName }))
+    .sort((a, b) => a.fullName.localeCompare(b.fullName));
+}
+
+function intakeRecipients(users: DemoUser[], ownerId: string, initiated: { name: string; email: string; billingEmail: string }) {
+  const targets = new Set<string>();
+  if (ownerId) targets.add(ownerId);
+  const active = users.filter((person) => person.status === "active");
+  for (const person of active) {
+    if (person.roleSlug === "client" || person.roleSlug === "admin" || person.roleSlug === "director") targets.add(person.id);
+    const email = person.email.toLowerCase();
+    const matchesProfile = (initiated.email && email === initiated.email.toLowerCase()) || (initiated.billingEmail && email === initiated.billingEmail.toLowerCase()) || person.fullName.toLowerCase() === initiated.name.toLowerCase();
+    if (matchesProfile) targets.add(person.id);
+  }
+  return [...targets];
+}
+
+export async function submitIntake(user: SessionUser, input: IntakeRequest, files: File[]) {
+  if (!canFileIntake(user)) throw new PortalError("You cannot submit a project intake.");
   let projectId = "";
   await mutate((store) => {
+    const names = store.organizations.filter((item) => item.status === "active").map((item) => item.name);
+    assertIntake(input, names);
+    const owner = store.users.find((person) => person.id === input.ownerId && person.status === "active" && isIntakeOwner(person.roleSlug));
+    if (!owner) throw new PortalError("Choose an admin or a project owner.");
     const company = input.clientName.trim();
-    if (!company) throw new PortalError("Client name is required.");
     let client = store.clients.find((item) => item.company.toLowerCase() === company.toLowerCase() || item.name.toLowerCase() === company.toLowerCase());
     if (!client) {
       client = { id: nid("cli"), name: company, company, email: "", phone: "", billingEmail: "", address: "", taxId: "", currency: studioCurrency(store), status: "active", notes: "" };
       store.clients.unshift(client);
     }
-    const ownerId = can(user, "projects.view_all") ? input.ownerId || user.id : user.id;
+    const matched = clientForProfile(store.clients, user);
+    const initiated = matched ?? { name: user.fullName, email: user.email, billingEmail: "" };
+    const ownerId = owner.id;
     projectId = nid("prj");
     store.projects.unshift({
       ...sowDefaults(),
@@ -778,15 +984,23 @@ export async function submitIntake(
       status: "planning",
       billingModel: "hourly",
       startDate: input.startDate,
-      endDate: "",
+      endDate: input.dueDate,
       budgetAmount: 0,
       currency: studioCurrency(store),
       ownerId,
       estimatedHours: input.estimatedHours,
       source: input.source,
+      initiatedById: matched?.id || "",
+      initiatedFor: input.clientName.trim(),
+      initiatedFrom: input.initiatedFrom.trim(),
     });
     store.members.push({ projectId, userId: ownerId, memberRole: "Owner", billRate: 0 });
+    if (ownerId !== user.id) store.members.push({ projectId, userId: user.id, memberRole: user.roleName, billRate: 0 });
     for (const file of files) rememberFile(store, user, projectId, "requirement", file);
+    const body = `${user.fullName} completed intake for ${input.name.trim()}. It is ready for SOW.`;
+    for (const recipient of intakeRecipients(store.users, ownerId, initiated)) {
+      notify(store, recipient, "Project intake completed", body, "/sow");
+    }
     audit(store, user, "project.intake", "project", projectId, `Submitted intake ${input.name.trim()}.`);
   });
   return projectId;

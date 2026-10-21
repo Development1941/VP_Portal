@@ -7,21 +7,24 @@ import { NoticeMenu } from "@/components/layout/notice-menu";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { NoticeToasts } from "@/components/toast";
 import { can } from "@/lib/access";
+import { showCommercials } from "@/lib/commercial";
 import { currencyCode } from "@/lib/currency";
 import type { NavLink } from "@/lib/nav";
-import type { Notification, SessionUser } from "@/lib/types";
+import type { FxRate, Notification, SessionUser } from "@/lib/types";
 
 export function Shell({
   user,
   links,
   notes,
   currency,
+  fx,
   children,
 }: {
   user: SessionUser;
   links: NavLink[];
   notes: Notification[];
   currency: string;
+  fx?: FxRate;
   children: React.ReactNode;
 }) {
   const firstName = user.fullName.trim().split(/\s+/)[0];
@@ -50,7 +53,7 @@ export function Shell({
             {firstName ? <p className="topbar-hello">Hi {firstName}</p> : null}
           </div>
           <div className="topbar-end">
-            <CurrencySwitch currency={currencyCode(currency)} editable={can(user, "settings.manage")} />
+            {showCommercials ? <CurrencySwitch currency={currencyCode(currency)} editable={can(user, "settings.manage")} fx={fx} /> : null}
             <ThemeToggle />
             {can(user, "notifications.view") ? <NoticeMenu notes={notes} /> : null}
             <AccountMenu user={user} settings={can(user, "settings.manage")} />

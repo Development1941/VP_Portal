@@ -1,5 +1,45 @@
 import { addDays, startOfWeek } from "@/lib/dates";
-import type { Project, Task, Timesheet, Workstream } from "@/lib/types";
+import { PortalError } from "@/lib/form";
+import type { Client, Project, Task, Timesheet, Workstream } from "@/lib/types";
+
+export type IntakeRequest = {
+  clientName: string;
+  name: string;
+  estimatedHours: number;
+  startDate: string;
+  dueDate: string;
+  ownerId: string;
+  source: Project["source"];
+  summary: string;
+  initiatedById: string;
+  initiatedFor: string;
+  initiatedFrom: string;
+};
+
+export function organizationName(client: Pick<Client, "name" | "company">) {
+  return (client.company || client.name).trim();
+}
+
+export function isIntakeOwner(roleSlug: string) {
+  return roleSlug === "admin" || roleSlug === "project_owner";
+}
+
+export function clientForProfile(clients: Client[], user: { fullName: string; email: string }) {
+  const email = user.email.toLowerCase();
+  const name = user.fullName.toLowerCase();
+  const active = clients.filter((client) => client.status === "active");
+  return active.find((client) => client.email.toLowerCase() === email) || active.find((client) => client.name.toLowerCase() === name);
+}
+
+export function assertIntake(input: IntakeRequest, organizations: string[]) {
+  if (!input.name.trim()) throw new PortalError("Project name is required.");
+  if (!input.clientName.trim()) throw new PortalError("Client name is required.");
+  if (!input.startDate) throw new PortalError("Requested start date is required.");
+  if (!input.dueDate) throw new PortalError("Project due date is required.");
+  if (input.dueDate < input.startDate) throw new PortalError("The due date must be on or after the requested start date.");
+  if (input.estimatedHours <= 0) throw new PortalError("Estimated hours must be greater than 0.");
+  if (!organizations.includes(input.initiatedFrom.trim())) throw new PortalError("Choose the organization this request came from.");
+}
 
 export const REQUIREMENT_SOURCES = [
   ["requirement_document", "Requirement document"],
@@ -64,6 +104,9 @@ export function sowDefaults() {
     activated: false,
     sowFileName: "",
     sowFilePath: "",
+    initiatedById: "",
+    initiatedFor: "",
+    initiatedFrom: "",
   };
 }
 
@@ -87,6 +130,9 @@ export function keepDelivery(existing: Project, input: Project): Project {
     activated: existing.activated,
     sowFileName: existing.sowFileName,
     sowFilePath: existing.sowFilePath,
+    initiatedById: existing.initiatedById,
+    initiatedFor: existing.initiatedFor,
+    initiatedFrom: existing.initiatedFrom,
   };
 }
 

@@ -3,8 +3,10 @@ import { saveRateAction } from "@/app/actions";
 import { ActionForm, Submit } from "@/components/common/forms";
 import { Badge, Denied, Meter, PageHeader } from "@/components/common/ui";
 import { can } from "@/lib/access";
+import { showCommercials } from "@/lib/commercial";
 import { todayIso } from "@/lib/dates";
-import { hoursLabel, money } from "@/lib/format";
+import { fxLabel } from "@/lib/fx";
+import { hoursLabel, money, prettyStamp } from "@/lib/format";
 import { projectOf, requirePage } from "@/lib/page";
 
 export default async function BillingPage() {
@@ -36,6 +38,28 @@ export default async function BillingPage() {
           );
         })}
       </div>
+      {showCommercials && data.fxRates.length ? (
+        <section className="card">
+          <h2>Market rates on record</h2>
+          <p className="muted">Each currency change converts the amounts at the published market rate and keeps that rate.</p>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>From</th><th>To</th><th>Rate</th><th>Source</th><th>Recorded</th></tr></thead>
+              <tbody>
+                {data.fxRates.map((row) => (
+                  <tr key={row.id}>
+                    <td>{row.from}</td>
+                    <td>{row.to}</td>
+                    <td>{fxLabel(row.from, row.rate, row.to)}</td>
+                    <td>{row.source}</td>
+                    <td>{prettyStamp(row.recordedAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
       {can(user, "billing.rates") ? (
         <section className="card">
           <h2>Hourly rate cards</h2>

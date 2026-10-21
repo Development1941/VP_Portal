@@ -3,12 +3,14 @@ import { setDeliveryStatusAction, uploadSowAction } from "@/app/actions";
 import { ActionForm, Submit } from "@/components/common/forms";
 import { Badge, Denied, PageHeader, Stat } from "@/components/common/ui";
 import { DELIVERY_STATUSES } from "@/lib/delivery";
-import { can } from "@/lib/access";
+import { can, canSeeIntake } from "@/lib/access";
+import { ArrivalToast } from "@/components/toast";
 import { clientOf, requirePage } from "@/lib/page";
 
-export default async function SowPage() {
-  const { user, data, allowed } = await requirePage(["projects.view", "projects.view_all", "projects.manage"]);
-  if (!allowed) return <Denied title="SOW management" />;
+export default async function SowPage({ searchParams }: { searchParams: Promise<{ intake?: string }> }) {
+  const query = await searchParams;
+  const { user, data, allowed } = await requirePage(["projects.view", "projects.view_all", "projects.manage", "projects.intake"]);
+  if (!allowed || !canSeeIntake(user)) return <Denied title="SOW management" />;
   const counts = {
     progress: data.projects.filter((project) => project.deliveryStatus === "in_progress").length,
     done: data.projects.filter((project) => project.deliveryStatus === "done").length,
@@ -18,6 +20,7 @@ export default async function SowPage() {
 
   return (
     <>
+      {query.intake ? <ArrivalToast title="Project intake completed." body="It is now with SOW. The client, admin, director, and the intake owner have been notified." /> : null}
       <PageHeader eyebrow="Delivery control" title="SOW management" lede="Every intaken project with its delivery status. Change status from the list and attach the SOW PDF in the same row." />
       <div className="stats">
         <Stat label="Projects intaken" value={String(data.projects.length)} />

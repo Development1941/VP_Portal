@@ -1,8 +1,9 @@
-import { can, canApproveProject, canEditDelivery, canEditTask, canManageProject, canSeeMilestones, canSeeTeamDsr, canUploadMilestones, projectLeads, projectVisible } from "@/lib/access";
+import { can, canApproveProject, canEditDelivery, canEditTask, canFileIntake, canManageProject, canSeeMilestones, canSeeTeamDsr, canUploadMilestones, projectLeads, projectVisible } from "@/lib/access";
 import { currencyCode, isCurrency } from "@/lib/currency";
+import { convertMoney, crossRate, marketBoard } from "@/lib/fx";
 import { addDays, stamp, todayIso } from "@/lib/dates";
 import { prettyDate, roundMoney } from "@/lib/format";
-import { billingModelFor, keepDelivery, sowDefaults, statusForDelivery } from "@/lib/delivery";
+import { assertIntake, billingModelFor, clientForProfile, isIntakeOwner, keepDelivery, sowDefaults, statusForDelivery, type IntakeRequest } from "@/lib/delivery";
 import { packHours, unpackHours } from "@/lib/health";
 import { PortalError } from "@/lib/form";
 import { ALL_PERMISSIONS, type PermissionKey } from "@/lib/permissions";
@@ -140,6 +141,9 @@ function mapProject(row: Row): Project {
     activated: Boolean(row.activated),
     sowFileName: text(row.sow_file_name),
     sowFilePath: text(row.sow_file_path),
+    initiatedById: text(row.initiated_by),
+    initiatedFor: text(row.initiated_for),
+    initiatedFrom: text(row.initiated_from),
   };
 }
 
@@ -359,7 +363,7 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
       seeGrants ? supabase.from("role_permissions").select("role_id, permission_key") : skipped(),
       supabase.from("profiles").select("id, full_name, email, title, phone, role_id, status"),
       supabase.from("clients").select("id, name, company, email, phone, billing_email, address, tax_id, currency, status, notes").order("company"),
-      supabase.from("projects").select("id, client_id, name, code, description, status, billing_model, start_date, end_date, budget_amount, currency, owner_id, estimated_hours, source, sow_stage, delivery_status, billing_terms, approval_status, renewal_date, scope, deliverables, risks, pending_actions, delivery_owner_id, invoicing_status, payment_status, activated, sow_file_name, sow_file_path").order("name"),
+      supabase.from("projects").select("id, client_id, name, code, description, status, billing_model, start_date, end_date, budget_amount, currency, owner_id, estimated_hours, source, sow_stage, delivery_status, billing_terms, approval_status, renewal_date, scope, deliverables, risks, pending_actions, delivery_owner_id, invoicing_status, payment_status, activated, sow_file_name, sow_file_path, initiated_by, initiated_for, initiated_from").order("name"),
       supabase.from("project_members").select("project_id, user_id, member_role, bill_rate"),
       supabase.from("milestones").select("id, project_id, name, description, due_date, status, amount"),
       supabase.from("features").select("id, project_id, name, description, billing_type, hourly_rate, fixed_amount, budget_hours, status"),
@@ -475,7 +479,41 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
     escalations: rows(escalationRes).map(mapEscalation).filter((item) => ids.has(item.projectId)),
     files: rows(fileRes).map(mapFile).filter((item) => ids.has(item.projectId)),
     workstreams: rows(workstreamRes).map(mapWorkstream),
+    fxRates: await fxHistory(),
+    statusUpdates: await statusBoard(),
   };
+}
+
+async function statusBoard() {
+  const supabase = await client();
+  const { data, error } = await supabase
+    .from("status_updates")
+    .select("sheet_no, project_name, sub_item, status, remarks, status_date")
+    .order("status_date", { ascending: false })
+    .order("sheet_no");
+  if (error) return [];
+  return (data ?? []).map((row) => ({
+    sheetNo: num(row.sheet_no),
+    project: text(row.project_name),
+    subItem: text(row.sub_item),
+    status: text(row.status),
+    remarks: text(row.remarks),
+    statusDate: text(row.status_date).slice(0, 10),
+  }));
+}
+
+async function fxHistory() {
+  const supabase = await client();
+  const { data, error } = await supabase.from("fx_rates").select("id, from_currency, to_currency, rate, source, recorded_at").order("recorded_at", { ascending: false }).limit(20);
+  if (error) return [];
+  return (data ?? []).map((row) => ({
+    id: text(row.id),
+    from: text(row.from_currency),
+    to: text(row.to_currency),
+    rate: num(row.rate),
+    source: text(row.source),
+    recordedAt: text(row.recorded_at),
+  }));
 }
 
 async function studioCurrency() {
@@ -487,15 +525,46 @@ async function studioCurrency() {
 export async function saveStudioCurrency(user: SessionUser, currency: string) {
   if (!can(user, "settings.manage")) throw new PortalError("You cannot change the studio currency.");
   if (!isCurrency(currency)) throw new PortalError("Choose a supported currency.");
+  const current = await studioCurrency();
+  if (current === currency) return;
+  const board = await marketBoard();
+  const rate = crossRate(board.quotes, current, currency);
   const admin = createServiceClient();
   const supabase = admin ?? (await client());
+  await scaleMoney(supabase, rate);
   const { error } = await supabase.from("studio_settings").update({ currency }).eq("id", 1);
   raise(error);
   for (const table of ["clients", "projects", "rates", "payments"] as const) {
     const { error: updateError } = await supabase.from(table).update({ currency }).not("id", "is", null);
     raise(updateError);
   }
-  await trail(user, "studio.currency", "studio", currency, `Set the studio currency to ${currency}.`);
+  await supabase.from("fx_rates").insert({ from_currency: current, to_currency: currency, rate, source: board.source });
+  await trail(user, "studio.currency", "studio", currency, `Converted ${current} to ${currency} at ${rate} (${board.source}, ${board.asOf}).`);
+}
+
+async function scaleMoney(supabase: SupabaseClient, rate: number) {
+  const tables: { table: string; columns: string[]; keys: string[] }[] = [
+    { table: "profiles", columns: ["hourly_cost"], keys: ["id"] },
+    { table: "projects", columns: ["budget_amount"], keys: ["id"] },
+    { table: "project_members", columns: ["bill_rate"], keys: ["project_id", "user_id"] },
+    { table: "milestones", columns: ["amount"], keys: ["id"] },
+    { table: "features", columns: ["hourly_rate", "fixed_amount"], keys: ["id"] },
+    { table: "rates", columns: ["hourly_rate"], keys: ["id"] },
+    { table: "invoice_lines", columns: ["rate", "amount"], keys: ["id"] },
+    { table: "payments", columns: ["amount"], keys: ["id"] },
+  ];
+  for (const entry of tables) {
+    const { data, error } = await supabase.from(entry.table).select([...entry.keys, ...entry.columns].join(", "));
+    raise(error);
+    for (const row of (data ?? []) as unknown as Record<string, unknown>[]) {
+      const patch: Record<string, number> = {};
+      for (const column of entry.columns) patch[column] = convertMoney(num(row[column]), rate);
+      let query = supabase.from(entry.table).update(patch);
+      for (const key of entry.keys) query = query.eq(key, row[key] as string);
+      const { error: updateError } = await query;
+      raise(updateError);
+    }
+  }
 }
 
 export async function saveClient(user: SessionUser, input: Client) {
@@ -1228,7 +1297,7 @@ async function ensureClient(user: SessionUser, name: string) {
   let inserted = await supabase.from("clients").insert(payload).select("id").single();
   if (inserted.error) {
     const admin = createServiceClient();
-    if (!admin || !can(user, "projects.manage")) throw new PortalError(inserted.error.message);
+    if (!admin || !canFileIntake(user)) throw new PortalError(inserted.error.message);
     inserted = await admin.from("clients").insert(payload).select("id").single();
   }
   raise(inserted.error);
@@ -1281,50 +1350,120 @@ async function storeProjectFile(user: SessionUser, projectId: string, kind: "req
   }
 }
 
-export async function submitIntake(
-  user: SessionUser,
-  input: { clientName: string; name: string; estimatedHours: number; startDate: string; ownerId: string; source: Project["source"]; summary: string },
-  files: File[],
-) {
-  if (!can(user, "projects.manage")) throw new PortalError("You cannot submit a project intake.");
-  if (!input.name.trim()) throw new PortalError("Project name is required.");
-  const ownerId = can(user, "projects.view_all") ? input.ownerId || user.id : user.id;
+export async function clientDirectory(user: SessionUser) {
+  if (!canFileIntake(user)) throw new PortalError("You cannot view client profiles.");
+  const supabase = await client();
+  const { data, error } = await supabase.from("clients").select("id, name, company, email, phone, billing_email, address, tax_id, currency, status, notes").order("name");
+  raise(error);
+  return (data ?? []).map(mapClient).filter((item) => item.status === "active");
+}
+
+export async function organizations(user: SessionUser) {
+  if (!canFileIntake(user)) throw new PortalError("You cannot view organizations.");
+  const supabase = await client();
+  const { data, error } = await supabase.from("organizations").select("name, status").eq("status", "active").order("name");
+  raise(error);
+  return (data ?? []).map((row) => text(row.name)).filter(Boolean);
+}
+
+export async function intakeOwners(user: SessionUser) {
+  if (!canFileIntake(user)) throw new PortalError("You cannot view intake owners.");
+  const supabase = await client();
+  const { data, error } = await supabase.from("profiles").select("id, full_name, status, roles(name, slug)").eq("status", "active");
+  raise(error);
+  return (data ?? [])
+    .flatMap((row) => {
+      const role = Array.isArray(row.roles) ? row.roles[0] : row.roles;
+      const slug = text(role?.slug);
+      if (!isIntakeOwner(slug)) return [];
+      return [{ id: text(row.id), fullName: text(row.full_name), roleName: text(role?.name) }];
+    })
+    .sort((a, b) => a.fullName.localeCompare(b.fullName));
+}
+
+export async function submitIntake(user: SessionUser, input: IntakeRequest, files: File[]) {
+  if (!canFileIntake(user)) throw new PortalError("You cannot submit a project intake.");
+  assertIntake(input, await organizations(user));
+  const owners = await intakeOwners(user);
+  const owner = owners.find((person) => person.id === input.ownerId);
+  if (!owner) throw new PortalError("Choose an admin or a project owner.");
+  const ownerId = owner.id;
   const clientId = await ensureClient(user, input.clientName);
+  const matched = clientForProfile(await clientDirectory(user), user);
+  const initiated = matched ?? { name: user.fullName, email: user.email, billingEmail: "" };
   const supabase = await client();
   const defaults = sowDefaults();
-  const { data, error } = await supabase
-    .from("projects")
-    .insert({
-      client_id: clientId,
-      name: input.name.trim(),
-      code: input.name.trim().replace(/\s+/g, "-").slice(0, 16).toUpperCase(),
-      description: input.summary.trim(),
-      status: "planning",
-      billing_model: "hourly",
-      start_date: uuid(input.startDate),
-      owner_id: ownerId,
-      currency: await studioCurrency(),
-      estimated_hours: input.estimatedHours,
-      source: input.source,
-      sow_stage: defaults.sowStage,
-      delivery_status: defaults.deliveryStatus,
-      billing_terms: defaults.billingTerms,
-      approval_status: defaults.approvalStatus,
-      invoicing_status: defaults.invoicingStatus,
-      payment_status: defaults.paymentStatus,
-      activated: false,
-    })
-    .select("id")
-    .single();
-  raise(error);
+  const payload = {
+    client_id: clientId,
+    name: input.name.trim(),
+    code: input.name.trim().replace(/\s+/g, "-").slice(0, 16).toUpperCase(),
+    description: input.summary.trim(),
+    status: "planning",
+    billing_model: "hourly",
+    start_date: uuid(input.startDate),
+    end_date: uuid(input.dueDate),
+    owner_id: ownerId,
+    initiated_by: uuid(matched?.id || ""),
+    initiated_for: input.clientName.trim(),
+    initiated_from: input.initiatedFrom.trim(),
+    currency: await studioCurrency(),
+    estimated_hours: input.estimatedHours,
+    source: input.source,
+    sow_stage: defaults.sowStage,
+    delivery_status: defaults.deliveryStatus,
+    billing_terms: defaults.billingTerms,
+    approval_status: defaults.approvalStatus,
+    invoicing_status: defaults.invoicingStatus,
+    payment_status: defaults.paymentStatus,
+    activated: false,
+  };
+  let inserted = await supabase.from("projects").insert(payload).select("id").single();
+  if (inserted.error) {
+    const admin = createServiceClient();
+    if (!admin) raise(inserted.error);
+    else inserted = await admin.from("projects").insert(payload).select("id").single();
+  }
+  raise(inserted.error);
+  const data = inserted.data;
   if (!data) throw new PortalError("That intake could not be saved.");
-  const { error: memberError } = await supabase.from("project_members").insert({ project_id: data.id, user_id: ownerId, member_role: "Owner", bill_rate: 0 });
-  raise(memberError);
+  const members = [{ project_id: data.id, user_id: ownerId, member_role: "Owner", bill_rate: 0 }];
+  if (ownerId !== user.id) members.push({ project_id: data.id, user_id: user.id, member_role: user.roleName, bill_rate: 0 });
+  const { error: memberError } = await supabase.from("project_members").insert(members);
+  if (memberError) {
+    const admin = createServiceClient();
+    if (!admin) raise(memberError);
+    else {
+      const { error: adminError } = await admin.from("project_members").insert(members);
+      raise(adminError);
+    }
+  }
   for (const file of files) {
     if (file.size > 0) await storeProjectFile(user, data.id, "requirement", file);
   }
   await trail(user, "project.intake", "project", data.id, `Submitted intake ${input.name.trim()}.`);
+  await notifyIntake(user, ownerId, initiated, input.name.trim());
   return data.id as string;
+}
+
+async function notifyIntake(user: SessionUser, ownerId: string, initiated: { name: string; email: string; billingEmail: string }, projectName: string) {
+  const supabase = await client();
+  const { data: profiles, error } = await supabase.from("profiles").select("id, full_name, email, role_id, status");
+  raise(error);
+  const { data: roles, error: roleError } = await supabase.from("roles").select("id, slug");
+  raise(roleError);
+  const slugOf = new Map((roles ?? []).map((role) => [text(role.id), text(role.slug)]));
+  const active = (profiles ?? []).filter((person) => person.status === "active");
+  const targets = new Set<string>();
+  if (ownerId) targets.add(ownerId);
+  for (const person of active) {
+    const slug = slugOf.get(text(person.role_id));
+    if (slug === "client" || slug === "admin" || slug === "director") targets.add(text(person.id));
+    const email = text(person.email).toLowerCase();
+    const matchesProfile = (initiated.email && email === initiated.email.toLowerCase()) || (initiated.billingEmail && email === initiated.billingEmail.toLowerCase()) || text(person.full_name).toLowerCase() === initiated.name.toLowerCase();
+    if (matchesProfile) targets.add(text(person.id));
+  }
+  const body = `${user.fullName} completed intake for ${projectName}. It is ready for SOW.`;
+  for (const id of targets) await ping(id, "Project intake completed", body, "/sow");
 }
 
 export async function saveSow(user: SessionUser, input: Project) {

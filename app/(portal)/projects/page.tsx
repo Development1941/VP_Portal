@@ -3,6 +3,7 @@ import { saveProjectAction } from "@/app/actions";
 import { ActionForm, Submit } from "@/components/common/forms";
 import { Badge, Denied, Meter, PageHeader } from "@/components/common/ui";
 import { can } from "@/lib/access";
+import { showCommercials } from "@/lib/commercial";
 import { money, prettyDate } from "@/lib/format";
 import { clientOf, nameOf, requirePage } from "@/lib/page";
 import { projectEconomics } from "@/lib/reports";
@@ -14,7 +15,7 @@ export default async function ProjectsPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Delivery" title="Projects" lede="Every engagement has an owner, a budget, a billing model, and a team. You see the projects you own or belong to." />
+      <PageHeader eyebrow="Delivery" title="Projects" lede="Every engagement has an owner and a team. You see the projects you own or belong to." />
       <div className="cards">
         {data.projects.map((project) => {
           const economics = projectEconomics(project, data);
@@ -26,13 +27,17 @@ export default async function ProjectsPage() {
                 <Badge value={project.status} />
               </div>
               <p className="muted">
-                {client?.company || "Client hidden"} · {project.code} · {project.billingModel}
+                {client?.company || "Client hidden"} · {project.code}{showCommercials ? ` · ${project.billingModel}` : ""}
               </p>
               <p>Owner {nameOf(data, project.ownerId)} · {prettyDate(project.startDate)} – {prettyDate(project.endDate)}</p>
-              <Meter value={economics.budgetUsed} />
-              <p className="muted">
-                Budget {money(project.budgetAmount, data.currency)} · recognized {money(economics.recognized, data.currency)}
-              </p>
+              {showCommercials ? (
+                <>
+                  <Meter value={economics.budgetUsed} />
+                  <p className="muted">
+                    Budget {money(project.budgetAmount, data.currency)} · recognized {money(economics.recognized, data.currency)}
+                  </p>
+                </>
+              ) : null}
             </Link>
           );
         })}
@@ -78,14 +83,16 @@ export default async function ProjectsPage() {
                 <option value="completed">Completed</option>
               </select>
             </label>
-            <label className="field">
-              <span>Billing model</span>
-              <select name="billingModel" defaultValue="hourly">
-                <option value="hourly">Hourly</option>
-                <option value="fixed">Fixed</option>
-                <option value="retainer">Retainer</option>
-              </select>
-            </label>
+            {showCommercials ? (
+              <label className="field">
+                <span>Billing model</span>
+                <select name="billingModel" defaultValue="hourly">
+                  <option value="hourly">Hourly</option>
+                  <option value="fixed">Fixed</option>
+                  <option value="retainer">Retainer</option>
+                </select>
+              </label>
+            ) : <input type="hidden" name="billingModel" value="hourly" />}
             <label className="field">
               <span>Start</span>
               <input type="date" name="startDate" />
@@ -94,14 +101,23 @@ export default async function ProjectsPage() {
               <span>End</span>
               <input type="date" name="endDate" />
             </label>
-            <label className="field">
-              <span>Budget</span>
-              <input name="budgetAmount" type="number" min="0" step="1" defaultValue="0" />
-            </label>
-            <label className="field">
-              <span>Currency</span>
-              <input name="currency" defaultValue={data.currency} readOnly />
-            </label>
+            {showCommercials ? (
+              <>
+                <label className="field">
+                  <span>Budget</span>
+                  <input name="budgetAmount" type="number" min="0" step="1" defaultValue="0" />
+                </label>
+                <label className="field">
+                  <span>Currency</span>
+                  <input name="currency" defaultValue={data.currency} readOnly />
+                </label>
+              </>
+            ) : (
+              <>
+                <input type="hidden" name="budgetAmount" value="0" />
+                <input type="hidden" name="currency" value={data.currency} />
+              </>
+            )}
             <label className="field wide">
               <span>Description</span>
               <textarea name="description" />

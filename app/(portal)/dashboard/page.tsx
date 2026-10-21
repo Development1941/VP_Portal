@@ -6,6 +6,8 @@ import { addDays, startOfWeek, todayIso } from "@/lib/dates";
 import { hoursLabel, money, prettyDate } from "@/lib/format";
 import { nameOf, projectOf, requirePage } from "@/lib/page";
 import { dues, isOverdue, projectEconomics } from "@/lib/reports";
+import { showCommercials } from "@/lib/commercial";
+import { latestStatus, statusTone } from "@/lib/status-board";
 
 export default async function DashboardPage() {
   const { user, data } = await requirePage(["dashboard.view"]);
@@ -24,6 +26,7 @@ export default async function DashboardPage() {
   const payouts = data.payments.filter((payment) => payment.direction === "outgoing" && ["initiated", "processing"].includes(payment.status));
   const financial = can(user, "reports.financial") || can(user, "invoices.view");
   const milestones = data.milestones.filter((item) => item.status !== "completed" && item.dueDate <= addDays(todayIso(), 14));
+  const board = latestStatus(data.statusUpdates);
 
   return (
     <>
@@ -32,9 +35,9 @@ export default async function DashboardPage() {
         <Stat label="My open tasks" value={String(myTasks.length)} note="Assigned to you" />
         <Stat label="My hours" value={hoursLabel(weekHours)} note="Logged this week" />
         {can(user, "timesheets.approve") ? <Stat label="Approvals" value={String(approvals.length)} note="Submitted and waiting" /> : <Stat label="Waiting on approval" value={String(waiting)} note={returned ? `${returned} returned` : "Submitted logs"} />}
-        {financial ? <Stat label="Pending dues" value={money(dueTotal, data.currency)} note={`${openDues.length} open invoice${openDues.length === 1 ? "" : "s"}`} /> : <Stat label="Projects" value={String(data.projects.length)} note="Visible to your role" />}
+        {showCommercials && financial ? <Stat label="Pending dues" value={money(dueTotal, data.currency)} note={`${openDues.length} open invoice${openDues.length === 1 ? "" : "s"}`} /> : <Stat label="Projects" value={String(data.projects.length)} note="Visible to your role" />}
       </section>
-      {can(user, "reports.financial") ? (
+      {showCommercials && can(user, "reports.financial") ? (
         <section className="stats">
           <Stat label="Billable this month" value={hoursLabel(monthBillable)} />
           <Stat label="Active projects" value={String(data.projects.filter((project) => project.status === "active").length)} />
@@ -42,6 +45,41 @@ export default async function DashboardPage() {
           <Stat label="Unbilled work" value={money(data.projects.reduce((sum, project) => sum + projectEconomics(project, data).unbilled, 0), data.currency)} note="Approved and not invoiced" />
         </section>
       ) : null}
+      <section className="card status-board">
+        <div className="card-head">
+          <h2>Project status</h2>
+          <span className="muted">{board.date ? `Latest update ${prettyDate(board.date)}` : "No status sheet yet"}</span>
+        </div>
+        {board.rows.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Project</th>
+                  <th>Sub item</th>
+                  <th>Status</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {board.rows.map((row) => (
+                  <tr key={`${row.sheetNo}-${row.project}-${row.subItem}`}>
+                    <td>{row.project}</td>
+                    <td>{row.subItem || "—"}</td>
+                    <td>
+                      <span className={`badge ${statusTone(row.status)}`}>{row.status || "—"}</span>
+                      {row.remarks ? <span className="remarks">{row.remarks}</span> : null}
+                    </td>
+                    <td className="num">{prettyDate(row.statusDate)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="empty">No project status has been recorded.</p>
+        )}
+      </section>
       {user.roleSlug === "director" ? (
         <section className="card">
           <div className="card-head">
@@ -71,14 +109,16 @@ export default async function DashboardPage() {
                 <Badge value="submitted" />
               </Link>
             ))}
-            {openDues.slice(0, 4).map((row) => (
-              <Link key={row.invoice.id} href={`/invoices/${row.invoice.id}`}>
-                <span>
-                  {row.invoice.number} · {money(row.amount, data.currency)}
-                </span>
-                <Badge value={isOverdue(row.invoice.dueDate, row.amount) ? "overdue" : row.invoice.status} />
-              </Link>
-            ))}
+            {showCommercials
+              ? openDues.slice(0, 4).map((row) => (
+                <Link key={row.invoice.id} href={`/invoices/${row.invoice.id}`}>
+                  <span>
+                    {row.invoice.number} · {money(row.amount, data.currency)}
+                  </span>
+                  <Badge value={isOverdue(row.invoice.dueDate, row.amount) ? "overdue" : row.invoice.status} />
+                </Link>
+              ))
+              : null}
             {milestones.slice(0, 4).map((item) => (
               <Link key={item.id} href={`/projects/${item.projectId}`}>
                 <span>
@@ -87,7 +127,7 @@ export default async function DashboardPage() {
                 <Badge value={item.status} />
               </Link>
             ))}
-            {!returned && !approvals.length && !openDues.length && !milestones.length ? <p className="empty">Nothing is waiting on you.</p> : null}
+            {!returned && !approvals.length && !(showCommercials && openDues.length) && !milestones.length ? <p className="empty">Nothing is waiting on you.</p> : null}
           </div>
         </section>
         <section className="card">

@@ -9,8 +9,12 @@ export function canAny(user: SessionUser, permissions: PermissionKey[]) {
   return permissions.some((permission) => can(user, permission));
 }
 
+export function canSeeIntake(user: SessionUser) {
+  return user.roleSlug === "client" || user.roleSlug === "admin" || user.roleSlug === "director";
+}
+
 export function projectVisible(user: SessionUser, project: Project, members: ProjectMember[]) {
-  if (can(user, "projects.view_all")) return true;
+  if (canSeeIntake(user) || can(user, "projects.view_all")) return true;
   if (project.ownerId === user.id) return true;
   return members.some((member) => member.projectId === project.id && member.userId === user.id);
 }
@@ -77,6 +81,10 @@ export function canApproveProject(user: SessionUser, project: Project) {
 export function canSeeTeamDsr(user: SessionUser, project: Project) {
   if (project.ownerId === user.id) return true;
   return can(user, "projects.view_all");
+}
+
+export function canFileIntake(user: SessionUser) {
+  return canSeeIntake(user);
 }
 
 export function fillsOwnDsr(user: SessionUser) {

@@ -93,6 +93,13 @@ export function Toaster() {
   );
 }
 
+export function ArrivalToast({ title, body }: { title: string; body?: string }) {
+  useEffect(() => {
+    pushToast({ title, body });
+  }, [title, body]);
+  return null;
+}
+
 export function NoticeToasts({ notes }: { notes: Notification[] }) {
   useEffect(() => {
     const key = "vp-toasted-notes";

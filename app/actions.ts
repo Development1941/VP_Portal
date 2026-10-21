@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { isCurrency } from "@/lib/currency";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/data";
-import { sowDefaults } from "@/lib/delivery";
+import { parseIntakeDate } from "@/lib/dates";
+import { REQUIREMENT_SOURCES, sowDefaults } from "@/lib/delivery";
 import { prettyDate } from "@/lib/format";
 import { asPermissions, list, num, str, type FormState, PortalError } from "@/lib/form";
 import { getSession, signIn, signOut } from "@/lib/session";
@@ -45,6 +46,10 @@ export async function loginAction(_prev: FormState, form: FormData): Promise<For
   const presets: Record<string, [string, string]> = {
     director: ["director@embee.local", "demo123"],
     owner: ["owner@embee.local", "demo123"],
+    manager: ["manav@embee.local", "demo123"],
+    scrum: ["sm@embee.local", "demo123"],
+    client: ["rakhee@embee.local", "demo123"],
+    brian: ["brian@embee.local", "demo123"],
     member: ["ishaan@embee.local", "demo123"],
   };
   const preset = presets[str(form, "preset")];
@@ -463,19 +468,32 @@ export async function resetDemoAction() {
   redirect("/dashboard");
 }
 
-export async function submitIntakeAction(_prev: FormState, form: FormData): Promise<FormState> {
+function intakeDate(value: string, label: string) {
   try {
-    const user = await actor();
+    return parseIntakeDate(value);
+  } catch {
+    throw new PortalError(`Choose a valid ${label}.`);
+  }
+}
+
+export async function submitIntakeAction(_prev: FormState, form: FormData): Promise<FormState> {
+  const user = await getSession();
+  if (!user) return { error: "Your session expired. Sign in again." };
+  try {
     await db().submitIntake(
       user,
       {
         clientName: str(form, "clientName"),
         name: str(form, "name"),
         estimatedHours: num(form, "estimatedHours"),
-        startDate: str(form, "startDate"),
+        startDate: intakeDate(str(form, "startDate"), "requested start date"),
+        dueDate: intakeDate(str(form, "dueDate"), "project due date"),
         ownerId: str(form, "ownerId"),
-        source: choice(form, "source", ["requirement_document", "proposal", "meeting_transcript", "email_thread"] as const, "requirement_document"),
+        source: choice(form, "source", REQUIREMENT_SOURCES.map(([value]) => value) as readonly Project["source"][], "requirement_document"),
         summary: str(form, "summary"),
+        initiatedById: "",
+        initiatedFor: str(form, "clientName"),
+        initiatedFrom: str(form, "initiatedFrom"),
       },
       filesOf(form, "files"),
     );
@@ -484,7 +502,7 @@ export async function submitIntakeAction(_prev: FormState, form: FormData): Prom
     throw error;
   }
   revalidatePath("/", "layout");
-  redirect("/sow");
+  redirect("/sow?intake=1");
 }
 
 export async function saveSowAction(_prev: FormState, form: FormData) {

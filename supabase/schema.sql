@@ -205,14 +205,34 @@ create index if not exists timesheets_project_idx on public.timesheets (project_
 create index if not exists tasks_assignee_idx on public.tasks (assignee_id);
 create index if not exists notifications_user_idx on public.notifications (user_id, created_at desc);
 
+update public.roles
+set name = 'Developer',
+    slug = 'developer',
+    description = 'Logs tasks and timesheets on assigned projects.'
+where slug = 'team_member';
+
 insert into public.roles (name, slug, description, is_system, locked)
 values
-  ('Director', 'director', 'Super admin with every client, project, rate, invoice, payout, and setting.', true, true),
-  ('Project Owner', 'project_owner', 'Runs assigned projects, tasks, milestones, approvals, and budgets.', true, false),
-  ('Team Member', 'team_member', 'Shared role for developers, designers, QA, and other delivery staff.', true, false),
+  ('Director / Super admin', 'director', 'Super admin with every client, project, rate, invoice, payout, and setting.', true, true),
+  ('Admin', 'admin', 'Administers the studio. The director stays the locked super admin.', true, false),
+  ('Project Manager / PO', 'project_owner', 'Runs projects, intake, tasks, milestones, and approvals.', true, false),
+  ('Developer', 'developer', 'Logs tasks and timesheets on assigned projects.', true, false),
   ('Finance', 'finance', 'Optional commercial role for invoices, payouts, rates, and profitability.', false, false),
-  ('Scrum Master', 'scrum_master', 'SM. Uploads sprints and milestones for the project owner and project manager.', true, false)
-on conflict (slug) do nothing;
+  ('Scrum Master', 'scrum_master', 'SM. Uploads sprints and milestones for the project owner and project manager.', true, false),
+  ('Project Manager', 'project_manager', 'Files a new project request and hands it to the SOW team.', true, false),
+  ('Client', 'client', 'Submits a project request with the requirement documents.', true, false)
+on conflict (slug) do update
+set name = excluded.name,
+    description = excluded.description;
+
+update public.roles
+set name = 'Director / Super admin'
+where slug = 'director';
+
+update public.roles
+set name = 'Project Manager / PO',
+    description = 'Runs projects, intake, tasks, milestones, and approvals.'
+where slug = 'project_owner';
 
 insert into public.role_permissions (role_id, permission_key)
 select r.id, p.key
@@ -221,7 +241,9 @@ join (values
   ('project_owner', 'dashboard.view'),
   ('project_owner', 'clients.view'),
   ('project_owner', 'projects.view'),
+  ('project_owner', 'projects.view_all'),
   ('project_owner', 'projects.manage'),
+  ('project_owner', 'projects.intake'),
   ('project_owner', 'tasks.view'),
   ('project_owner', 'tasks.manage'),
   ('project_owner', 'timesheets.submit'),
@@ -231,11 +253,37 @@ join (values
   ('project_owner', 'reports.project'),
   ('project_owner', 'team.view'),
   ('project_owner', 'notifications.view'),
-  ('team_member', 'dashboard.view'),
-  ('team_member', 'projects.view'),
-  ('team_member', 'tasks.view'),
-  ('team_member', 'timesheets.submit'),
-  ('team_member', 'notifications.view'),
+  ('admin', 'dashboard.view'),
+  ('admin', 'clients.view'),
+  ('admin', 'clients.manage'),
+  ('admin', 'projects.view'),
+  ('admin', 'projects.view_all'),
+  ('admin', 'projects.manage'),
+  ('admin', 'projects.intake'),
+  ('admin', 'tasks.view'),
+  ('admin', 'tasks.manage'),
+  ('admin', 'milestones.manage'),
+  ('admin', 'timesheets.submit'),
+  ('admin', 'timesheets.view_all'),
+  ('admin', 'timesheets.approve'),
+  ('admin', 'billing.features'),
+  ('admin', 'billing.rates'),
+  ('admin', 'invoices.view'),
+  ('admin', 'invoices.manage'),
+  ('admin', 'payments.view'),
+  ('admin', 'payments.manage'),
+  ('admin', 'reports.project'),
+  ('admin', 'reports.financial'),
+  ('admin', 'team.view'),
+  ('admin', 'team.manage'),
+  ('admin', 'notifications.view'),
+  ('admin', 'audit.view'),
+  ('admin', 'settings.manage'),
+  ('developer', 'dashboard.view'),
+  ('developer', 'projects.view'),
+  ('developer', 'tasks.view'),
+  ('developer', 'timesheets.submit'),
+  ('developer', 'notifications.view'),
   ('finance', 'dashboard.view'),
   ('finance', 'clients.view'),
   ('finance', 'projects.view'),
@@ -255,7 +303,18 @@ join (values
   ('scrum_master', 'dashboard.view'),
   ('scrum_master', 'projects.view'),
   ('scrum_master', 'milestones.manage'),
-  ('scrum_master', 'notifications.view')
+  ('scrum_master', 'notifications.view'),
+  ('project_manager', 'dashboard.view'),
+  ('project_manager', 'clients.view'),
+  ('project_manager', 'projects.view'),
+  ('project_manager', 'projects.view_all'),
+  ('project_manager', 'projects.intake'),
+  ('project_manager', 'notifications.view'),
+  ('client', 'dashboard.view'),
+  ('client', 'clients.view'),
+  ('client', 'projects.view'),
+  ('client', 'projects.intake'),
+  ('client', 'notifications.view')
 ) as p(slug, key) on p.slug = r.slug
 on conflict do nothing;
 
@@ -268,7 +327,7 @@ alter table public.invoices
   alter column due_date set not null;
 
 update public.profiles
-set role_id = (select id from public.roles where slug = 'team_member')
+set role_id = (select id from public.roles where slug = 'developer')
 where role_id is null;
 
 alter table public.profiles
@@ -325,6 +384,14 @@ as $$
           select 1 from public.project_members m
           where m.project_id = p.id and m.user_id = auth.uid()
         )
+        or exists (
+          select 1
+          from public.profiles pr
+          join public.roles r on r.id = pr.role_id
+          where pr.id = auth.uid()
+            and pr.status = 'active'
+            and r.slug in ('client', 'admin', 'director')
+        )
       )
   );
 $$;
@@ -371,9 +438,9 @@ as $$
 declare
   chosen uuid;
 begin
-  select id into chosen from public.roles where slug = coalesce(new.raw_user_meta_data->>'role_slug', 'team_member');
+  select id into chosen from public.roles where slug = coalesce(new.raw_user_meta_data->>'role_slug', 'developer');
   if chosen is null then
-    select id into chosen from public.roles where slug = 'team_member';
+    select id into chosen from public.roles where slug = 'developer';
   end if;
   insert into public.profiles (id, full_name, email, title, role_id, status)
   values (
@@ -518,7 +585,7 @@ drop policy if exists projects_read on public.projects;
 create policy projects_read on public.projects for select to authenticated using (public.visible_project(id));
 drop policy if exists projects_insert on public.projects;
 create policy projects_insert on public.projects for insert to authenticated
-  with check (public.has_permission('projects.manage') and (public.has_permission('projects.view_all') or owner_id = auth.uid()));
+  with check ((public.has_permission('projects.manage') or public.has_permission('projects.intake')) and (public.has_permission('projects.view_all') or owner_id = auth.uid()));
 drop policy if exists projects_update on public.projects;
 create policy projects_update on public.projects for update to authenticated
   using (public.has_permission('projects.manage') and public.visible_project(id) and (public.has_permission('projects.view_all') or owner_id = auth.uid()))
@@ -529,7 +596,7 @@ create policy members_read on public.project_members for select to authenticated
 drop policy if exists members_write on public.project_members;
 create policy members_write on public.project_members for all to authenticated
   using (public.has_permission('projects.manage') and public.visible_project(project_id) and (public.has_permission('projects.view_all') or exists (select 1 from public.projects p where p.id = project_id and p.owner_id = auth.uid())))
-  with check (public.has_permission('projects.manage') and (public.has_permission('projects.view_all') or exists (select 1 from public.projects p where p.id = project_id and p.owner_id = auth.uid())));
+  with check ((public.has_permission('projects.manage') or public.has_permission('projects.intake')) and (public.has_permission('projects.view_all') or exists (select 1 from public.projects p where p.id = project_id and p.owner_id = auth.uid())));
 
 drop policy if exists milestones_read on public.milestones;
 create policy milestones_read on public.milestones for select to authenticated
@@ -589,6 +656,9 @@ create policy tasks_read on public.tasks for select to authenticated
     public.visible_project(project_id)
     and (
       assignee_id = auth.uid()
+
+
+
       or public.has_permission('tasks.view')
       or public.has_permission('tasks.manage')
       or public.has_permission('projects.view_all')
@@ -716,6 +786,9 @@ alter table public.projects add column if not exists payment_status text not nul
 alter table public.projects add column if not exists activated boolean not null default false;
 alter table public.projects add column if not exists sow_file_name text not null default '';
 alter table public.projects add column if not exists sow_file_path text not null default '';
+alter table public.projects add column if not exists initiated_by uuid references public.clients(id) on delete set null;
+alter table public.projects add column if not exists initiated_for text not null default '';
+alter table public.projects add column if not exists initiated_from text not null default '';
 alter table public.tasks add column if not exists start_date date;
 alter table public.tasks add column if not exists actual_hours numeric not null default 0;
 
@@ -845,6 +918,67 @@ create policy studio_write on public.studio_settings for update to authenticated
   with check (public.has_permission('settings.manage'));
 
 grant select, update on public.studio_settings to authenticated;
+
+create table if not exists public.fx_rates (
+  id uuid primary key default gen_random_uuid(),
+  from_currency text not null,
+  to_currency text not null,
+  rate numeric not null check (rate > 0),
+  source text not null,
+  recorded_at timestamptz not null default now()
+);
+
+alter table public.fx_rates enable row level security;
+
+drop policy if exists fx_read on public.fx_rates;
+create policy fx_read on public.fx_rates for select to authenticated using (true);
+
+drop policy if exists fx_write on public.fx_rates;
+create policy fx_write on public.fx_rates for insert to authenticated
+  with check (public.has_permission('settings.manage'));
+
+grant select, insert on public.fx_rates to authenticated;
+
+create table if not exists public.organizations (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  status text not null default 'active' check (status in ('active', 'inactive')),
+  created_at timestamptz not null default now()
+);
+
+insert into public.organizations (name)
+values ('EMBEE'), ('Hanu.AI')
+on conflict (name) do nothing;
+
+grant select, insert, update, delete on public.organizations to authenticated;
+
+alter table public.organizations enable row level security;
+
+drop policy if exists organizations_read on public.organizations;
+create policy organizations_read on public.organizations for select to authenticated using (true);
+
+drop policy if exists organizations_write on public.organizations;
+create policy organizations_write on public.organizations for all to authenticated
+  using (public.has_permission('settings.manage') or public.has_permission('clients.manage'))
+  with check (public.has_permission('settings.manage') or public.has_permission('clients.manage'));
+
+create table if not exists public.status_updates (
+  id uuid primary key default gen_random_uuid(),
+  sheet_no int not null,
+  project_name text not null,
+  sub_item text not null default '',
+  status text not null default '',
+  remarks text not null default '',
+  status_date date not null,
+  unique (project_name, sub_item, status_date)
+);
+
+alter table public.status_updates enable row level security;
+
+drop policy if exists status_updates_read on public.status_updates;
+create policy status_updates_read on public.status_updates for select to authenticated using (true);
+
+grant select on public.status_updates to authenticated;
 
 with ranked as (
   select id, row_number() over (

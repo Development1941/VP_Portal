@@ -1,4 +1,5 @@
-import { canAny } from "@/lib/access";
+import { canAny, canSeeIntake } from "@/lib/access";
+import { showCommercials } from "@/lib/commercial";
 import type { PermissionKey } from "@/lib/permissions";
 import type { SessionUser } from "@/lib/types";
 
@@ -14,8 +15,8 @@ export const NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: "dashboard", section: "Workspace", allow: (user) => canAny(user, ["dashboard.view"]) },
   { href: "/work", label: "My work", icon: "tasks", section: "Workspace", allow: (user) => canAny(user, ["tasks.view"]) },
   { href: "/timesheets", label: "DSR", icon: "time", section: "Workspace", allow: (user) => canAny(user, ["timesheets.submit", "timesheets.approve", "timesheets.view_all"]) },
-  { href: "/intake", label: "Project intake", icon: "intake", section: "Delivery control", allow: (user) => canAny(user, ["projects.manage", "projects.view", "projects.view_all"]) },
-  { href: "/sow", label: "SOW", icon: "sow", section: "Delivery control", allow: (user) => canAny(user, ["projects.view", "projects.view_all", "projects.manage"]) },
+  { href: "/intake", label: "Project intake", icon: "intake", section: "Delivery control", allow: (user) => canSeeIntake(user) },
+  { href: "/sow", label: "SOW", icon: "sow", section: "Delivery control", allow: (user) => canSeeIntake(user) },
   { href: "/resources", label: "Resources", icon: "resources", section: "Delivery control", allow: (user) => canAny(user, ["projects.view", "projects.view_all", "tasks.view", "tasks.manage"]) },
   { href: "/delivery", label: "Delivery tasks", icon: "tasks", section: "Delivery control", allow: (user) => canAny(user, ["tasks.view", "tasks.manage"]) },
   { href: "/utilization", label: "Utilization", icon: "billing", section: "Delivery control", allow: (user) => canAny(user, ["timesheets.view_all", "billing.features", "reports.project", "reports.financial"]) },
@@ -33,7 +34,7 @@ export const NAV: NavItem[] = [
 ];
 
 export function navigation(user: SessionUser) {
-  return NAV.filter((item) => item.allow(user)).map(({ href, label, icon, section }) => ({ href, label, icon, section }));
+  return NAV.filter((item) => item.allow(user) && (showCommercials || item.section !== "Commercial")).map(({ href, label, icon, section }) => ({ href, label, icon, section }));
 }
 
 export type NavLink = ReturnType<typeof navigation>[number];

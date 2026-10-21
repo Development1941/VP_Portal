@@ -3,6 +3,7 @@ import { removeMemberAction, saveFeatureAction, saveMemberAction, saveMilestoneA
 import { ActionForm, Submit } from "@/components/common/forms";
 import { Badge, Empty, Meter, PageHeader, Stat } from "@/components/common/ui";
 import { can, canEditTask, canManageProject, canSeeMilestones, canSeeTeamDsr, canUploadMilestones, projectVisible } from "@/lib/access";
+import { showCommercials } from "@/lib/commercial";
 import { db } from "@/lib/data";
 import { hoursLabel, money, prettyDate, prettyStamp } from "@/lib/format";
 import { projectHealth } from "@/lib/health";
@@ -52,11 +53,13 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           <b style={{ fontSize: "1.3rem" }}>{client?.company || "—"}</b>
           <em>Owner {nameOf(data, project.ownerId)}</em>
         </article>
-        <article className="stat">
-          <span>Budget</span>
-          <b>{money(project.budgetAmount, data.currency)}</b>
-          <em>{economics.budgetUsed}% recognized</em>
-        </article>
+        {showCommercials ? (
+          <article className="stat">
+            <span>Budget</span>
+            <b>{money(project.budgetAmount, data.currency)}</b>
+            <em>{economics.budgetUsed}% recognized</em>
+          </article>
+        ) : null}
         <article className="stat">
           <span>Billable / other</span>
           <b>{hoursLabel(economics.billableHours)}</b>
@@ -65,10 +68,10 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         <article className="stat">
           <span>Schedule</span>
           <b style={{ fontSize: "1.2rem" }}>{prettyDate(project.endDate)}</b>
-          <em>{project.billingModel} · from {prettyDate(project.startDate)}</em>
+          <em>{showCommercials ? `${project.billingModel} · ` : ""}from {prettyDate(project.startDate)}</em>
         </article>
       </section>
-      <Meter value={economics.budgetUsed} />
+      {showCommercials ? <Meter value={economics.budgetUsed} /> : null}
       <section className="card">
         <h2>Tracking register</h2>
         <div className="stats">
@@ -106,18 +109,29 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                 <option value="completed">Completed</option>
               </select>
             </label>
-            <label className="field">
-              <span>Billing model</span>
-              <select name="billingModel" defaultValue={project.billingModel}>
-                <option value="hourly">Hourly</option>
-                <option value="fixed">Fixed</option>
-                <option value="retainer">Retainer</option>
-              </select>
-            </label>
+            {showCommercials ? (
+              <label className="field">
+                <span>Billing model</span>
+                <select name="billingModel" defaultValue={project.billingModel}>
+                  <option value="hourly">Hourly</option>
+                  <option value="fixed">Fixed</option>
+                  <option value="retainer">Retainer</option>
+                </select>
+              </label>
+            ) : <input type="hidden" name="billingModel" value={project.billingModel} />}
             <label className="field"><span>Start</span><input type="date" name="startDate" defaultValue={project.startDate} /></label>
             <label className="field"><span>End</span><input type="date" name="endDate" defaultValue={project.endDate} /></label>
-            <label className="field"><span>Budget</span><input type="number" name="budgetAmount" defaultValue={project.budgetAmount} /></label>
-            <label className="field"><span>Currency</span><input name="currency" defaultValue={data.currency} readOnly /></label>
+            {showCommercials ? (
+              <>
+                <label className="field"><span>Budget</span><input type="number" name="budgetAmount" defaultValue={project.budgetAmount} /></label>
+                <label className="field"><span>Currency</span><input name="currency" defaultValue={data.currency} readOnly /></label>
+              </>
+            ) : (
+              <>
+                <input type="hidden" name="budgetAmount" value={project.budgetAmount} />
+                <input type="hidden" name="currency" value={data.currency} />
+              </>
+            )}
             <label className="field wide"><span>Description</span><textarea name="description" defaultValue={project.description} /></label>
             <Submit>Save project</Submit>
           </ActionForm>
@@ -125,16 +139,16 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       ) : null}
       <div className="split">
         <section className="card">
-          <h2>Team and bill rates</h2>
+          <h2>{showCommercials ? "Team and bill rates" : "Team"}</h2>
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Person</th><th>Role on project</th><th className="num">Bill rate</th><th></th></tr></thead>
+              <thead><tr><th>Person</th><th>Role on project</th>{showCommercials ? <th className="num">Bill rate</th> : null}<th></th></tr></thead>
               <tbody>
                 {members.map((member) => (
                   <tr key={member.userId}>
                     <td>{nameOf(data, member.userId)}</td>
                     <td>{member.memberRole}</td>
-                    <td className="num">{member.billRate ? money(member.billRate, data.currency) : "—"}</td>
+                    {showCommercials ? <td className="num">{member.billRate ? money(member.billRate, data.currency) : "—"}</td> : null}
                     <td>
                       {manage && member.userId !== project.ownerId ? (
                         <ActionForm action={removeMemberAction}>
@@ -160,7 +174,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                 </select>
               </label>
               <label className="field"><span>Role on project</span><input name="memberRole" placeholder="Developer" /></label>
-              <label className="field"><span>Bill rate / hour</span><input type="number" name="billRate" min="0" defaultValue="0" /></label>
+              {showCommercials ? <label className="field"><span>Bill rate / hour</span><input type="number" name="billRate" min="0" defaultValue="0" /></label> : <input type="hidden" name="billRate" value="0" />}
               <div className="actions"><Submit>Add or update</Submit></div>
             </ActionForm>
           ) : null}
@@ -187,7 +201,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                   <div className="muted">
                     {item.plannedHours > 0 ? hoursLabel(item.plannedHours) : "No hours allocated"}
                     {item.dueDate ? ` · ${prettyDate(item.dueDate)}` : ""}
-                    {item.amount ? ` · ${money(item.amount, data.currency)}` : ""}
+                    {showCommercials && item.amount ? ` · ${money(item.amount, data.currency)}` : ""}
                     {item.description ? ` · ${item.description}` : ""}
                   </div>
                 </div>
@@ -259,7 +273,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         ) : null}
       </div>
       <section className="card">
-        <h2>Feature billing cards</h2>
+        <h2>{showCommercials ? "Feature billing cards" : "Features"}</h2>
         <div className="cards">
           {features.map((feature) => {
             const logged = data.timesheets.filter((entry) => entry.featureId === feature.id).reduce((sum, entry) => sum + entry.hours, 0);
@@ -270,7 +284,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                 <p className="muted">{feature.description}</p>
                 <Meter value={progress} />
                 <p>{hoursLabel(logged)} of {hoursLabel(feature.budgetHours)} budgeted</p>
-                <strong>{feature.billingType === "fixed" ? money(feature.fixedAmount, data.currency) : `${money(feature.hourlyRate, data.currency)} / hour`}</strong>
+                {showCommercials ? <strong>{feature.billingType === "fixed" ? money(feature.fixedAmount, data.currency) : `${money(feature.hourlyRate, data.currency)} / hour`}</strong> : null}
               </article>
             );
           })}
@@ -279,15 +293,25 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           <ActionForm action={saveFeatureAction} className="form-grid">
             <input type="hidden" name="projectId" value={project.id} />
             <label className="field"><span>Feature</span><input name="name" required /></label>
-            <label className="field">
-              <span>Billing</span>
-              <select name="billingType" defaultValue="hourly">
-                <option value="hourly">Hourly</option>
-                <option value="fixed">Fixed</option>
-              </select>
-            </label>
-            <label className="field"><span>Hourly rate</span><input type="number" name="hourlyRate" defaultValue="0" /></label>
-            <label className="field"><span>Fixed amount</span><input type="number" name="fixedAmount" defaultValue="0" /></label>
+            {showCommercials ? (
+              <>
+                <label className="field">
+                  <span>Billing</span>
+                  <select name="billingType" defaultValue="hourly">
+                    <option value="hourly">Hourly</option>
+                    <option value="fixed">Fixed</option>
+                  </select>
+                </label>
+                <label className="field"><span>Hourly rate</span><input type="number" name="hourlyRate" defaultValue="0" /></label>
+                <label className="field"><span>Fixed amount</span><input type="number" name="fixedAmount" defaultValue="0" /></label>
+              </>
+            ) : (
+              <>
+                <input type="hidden" name="billingType" value="hourly" />
+                <input type="hidden" name="hourlyRate" value="0" />
+                <input type="hidden" name="fixedAmount" value="0" />
+              </>
+            )}
             <label className="field"><span>Budget hours</span><input type="number" name="budgetHours" defaultValue="0" /></label>
             <label className="field">
               <span>Status</span>

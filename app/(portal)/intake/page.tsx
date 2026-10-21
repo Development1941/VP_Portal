@@ -1,50 +1,63 @@
 import Link from "next/link";
 import { submitIntakeAction } from "@/app/actions";
+import { canFileIntake, canSeeIntake } from "@/lib/access";
 import { ActionForm, Submit } from "@/components/common/forms";
-import { Badge, Denied, PageHeader } from "@/components/common/ui";
+import { HoursField } from "@/components/intake/hours-field";
+import { Badge, Denied, Empty, PageHeader } from "@/components/common/ui";
+import { db } from "@/lib/data";
 import { REQUIREMENT_SOURCES, sourceLabel } from "@/lib/delivery";
-import { hoursLabel } from "@/lib/format";
+import { hoursLabel, prettyDate } from "@/lib/format";
 import { clientOf, requirePage } from "@/lib/page";
 
 export default async function IntakePage() {
-  const { user, data, allowed } = await requirePage(["projects.manage", "projects.view", "projects.view_all"]);
-  if (!allowed) return <Denied title="Project intake" />;
-  const owners = data.users.filter((person) => person.status === "active");
-  const canChooseOwner = user.permissions.includes("projects.view_all");
+  const { user, data, allowed } = await requirePage(["projects.intake", "projects.manage", "projects.view", "projects.view_all"]);
+  if (!allowed || !canSeeIntake(user)) return <Denied title="Project intake" />;
+  const filing = canFileIntake(user);
+  const organizations = filing ? await db().organizations(user) : [];
+  const owners = filing ? await db().intakeOwners(user) : [];
+  const ownerDefault = owners.some((person) => person.id === user.id) ? user.id : owners[0]?.id || "";
 
   return (
-    <>
-      <PageHeader eyebrow="Delivery control" title="Project intake" lede="Capture a new request with its estimate and supporting material. The SOW team picks it up from here." />
-      {user.permissions.includes("projects.manage") ? (
-        <section className="card">
-          <h2>New project request</h2>
-          <ActionForm action={submitIntakeAction} className="form-grid">
+    <div className="intake-lock">
+      <PageHeader eyebrow="Delivery control" title="Project intake" lede="A client, an admin, or the director files the request. Completing it opens SOW and notifies those roles." />
+      {filing ? (
+        <section className="card intake-form">
+          <ActionForm action={submitIntakeAction} className="intake-fields">
+            <div className="form-grid intake-fields-scroll">
             <label className="field">
               <span>Client name</span>
-              <input name="clientName" required list="client-names" placeholder="Northwind Bank" />
-              <datalist id="client-names">
-                {data.clients.map((client) => (
-                  <option key={client.id} value={client.company} />
-                ))}
-              </datalist>
+              <input name="clientName" required defaultValue={user.fullName} />
             </label>
             <label className="field">
               <span>Project name</span>
               <input name="name" required placeholder="Atlas Ledger Migration" />
             </label>
-            <label className="field">
-              <span>Estimated hours</span>
-              <input name="estimatedHours" type="number" min="0" step="1" placeholder="600" />
-            </label>
+            <HoursField />
             <label className="field">
               <span>Requested start date</span>
-              <input name="startDate" type="date" />
+              <input name="startDate" type="date" required />
+            </label>
+            <label className="field">
+              <span>Project due date</span>
+              <input name="dueDate" type="date" required />
+            </label>
+            <label className="field">
+              <span>Initiated by</span>
+              <input value={user.fullName} readOnly />
+            </label>
+            <label className="field">
+              <span>Initiated from</span>
+              <select name="initiatedFrom" required defaultValue={organizations[0] || ""}>
+                {organizations.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
             </label>
             <label className="field">
               <span>Intake owner</span>
-              <select name="ownerId" defaultValue={canChooseOwner ? owners[0]?.id : user.id}>
-                {(canChooseOwner ? owners : owners.filter((person) => person.id === user.id)).map((person) => (
-                  <option key={person.id} value={person.id}>{person.fullName}</option>
+              <select name="ownerId" required defaultValue={ownerDefault}>
+                {owners.map((person) => (
+                  <option key={person.id} value={person.id}>{person.fullName} · {person.roleName}</option>
                 ))}
               </select>
             </label>
@@ -58,42 +71,49 @@ export default async function IntakePage() {
             </label>
             <label className="field wide">
               <span>Summary and expected outcome</span>
-              <textarea name="summary" placeholder="What should this engagement deliver?" />
+              <textarea name="summary" className="intake-summary" placeholder="Optional" />
             </label>
             <label className="field wide">
-              <span>Requirement documents, proposals, or meeting transcripts</span>
+              <span>Upload requirement documents, proposals or meeting transcripts</span>
               <input name="files" type="file" multiple accept=".pdf,.doc,.docx,.txt,.vtt" />
             </label>
-            <Submit>Submit intake</Submit>
+            </div>
+            <div className="actions">
+              <Submit>Submit intake</Submit>
+            </div>
           </ActionForm>
         </section>
       ) : null}
-      <section className="card">
-        <h2>Recent intakes</h2>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Project</th><th>Client</th><th>Est. hours</th><th>Source</th><th>Stage</th><th>Files</th></tr>
-            </thead>
-            <tbody>
-              {data.projects.map((project) => (
-                <tr key={project.id}>
-                  <td><Link href={`/sow/${project.id}`}>{project.name}</Link></td>
-                  <td>{clientOf(data, project.clientId)?.company || "Client hidden"}</td>
-                  <td>{hoursLabel(project.estimatedHours)}</td>
-                  <td>{sourceLabel(project.source)}</td>
-                  <td><Badge value={project.sowStage} /></td>
-                  <td>
-                    {data.files.filter((file) => file.projectId === project.id && file.kind === "requirement").map((file) => (
-                      <a key={file.id} href={`/files/${file.id}`}>{file.fileName}</a>
-                    ))}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </>
+      <details className="card intake-history">
+        <summary>Previous intakes</summary>
+        {!data.projects.length ? <Empty>No project request has been filed yet.</Empty> : null}
+        {data.projects.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Project</th><th>Client</th><th>Due</th><th>Est. hours</th><th>Source</th><th>Stage</th><th>Files</th></tr>
+              </thead>
+              <tbody>
+                {data.projects.map((project) => (
+                  <tr key={project.id}>
+                    <td><Link href={`/sow/${project.id}`}>{project.name}</Link></td>
+                    <td>{clientOf(data, project.clientId)?.company || "Client hidden"}</td>
+                    <td>{prettyDate(project.endDate)}</td>
+                    <td>{hoursLabel(project.estimatedHours)}</td>
+                    <td>{sourceLabel(project.source)}</td>
+                    <td><Badge value={project.sowStage} /></td>
+                    <td>
+                      {data.files.filter((file) => file.projectId === project.id && file.kind === "requirement").map((file) => (
+                        <a key={file.id} href={`/files/${file.id}`}>{file.fileName}</a>
+                      ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </details>
+    </div>
   );
 }

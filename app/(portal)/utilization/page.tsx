@@ -1,4 +1,5 @@
 import { Denied, Meter, PageHeader } from "@/components/common/ui";
+import { showCommercials } from "@/lib/commercial";
 import { Badge } from "@/components/common/ui";
 import { addDays, startOfWeek } from "@/lib/dates";
 import { hoursConsumed } from "@/lib/delivery";
@@ -21,7 +22,7 @@ export default async function UtilizationPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Delivery control" title="Resource billing and hourly utilization" lede={`Week of ${prettyDate(start)}. Billable hours against an 8 hour day.`} />
+      <PageHeader eyebrow="Delivery control" title={showCommercials ? "Resource billing and hourly utilization" : "Hourly utilization"} lede={`Week of ${prettyDate(start)}. Hours against an 8 hour day.`} />
       <section className="card">
         <div className="table-wrap">
           <table>
@@ -31,8 +32,8 @@ export default async function UtilizationPage() {
                 {DAY_NAMES.map((day) => <th key={day}>{day}</th>)}
                 <th>Total</th>
                 <th>Utilization</th>
-                <th>Rate</th>
-                <th>Billable</th>
+                {showCommercials ? <th>Rate</th> : null}
+                {showCommercials ? <th>Billable</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -52,22 +53,22 @@ export default async function UtilizationPage() {
                     ))}
                     <td>{hoursLabel(sum)}</td>
                     <td><Meter value={Math.min(100, utilization)} tone={utilization > 100 ? "bad" : undefined} />{utilization}%</td>
-                    <td>{rates.length === 1 ? `${money(rates[0], data.currency)}/h` : rates.length > 1 ? "Mixed" : "—"}</td>
-                    <td>{money(billable, data.currency)}</td>
+                    {showCommercials ? <td>{rates.length === 1 ? `${money(rates[0], data.currency)}/h` : rates.length > 1 ? "Mixed" : "—"}</td> : null}
+                    {showCommercials ? <td>{money(billable, data.currency)}</td> : null}
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
-        <p className="total-line"><b>Weekly billable total: {money(total, data.currency)}</b></p>
+        {showCommercials ? <p className="total-line"><b>Weekly billable total: {money(total, data.currency)}</b></p> : null}
       </section>
       <section className="card">
         <h2>Hours against SOW</h2>
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Project</th><th>Budget</th><th>Consumed</th><th>Balance</th><th>Invoicing</th><th>Payment</th></tr>
+              <tr><th>Project</th><th>Budget</th><th>Consumed</th><th>Balance</th>{showCommercials ? <th>Invoicing</th> : null}{showCommercials ? <th>Payment</th> : null}</tr>
             </thead>
             <tbody>
               {finalised.map((project) => {
@@ -79,8 +80,8 @@ export default async function UtilizationPage() {
                     <td>{hoursLabel(project.estimatedHours)}</td>
                     <td><Meter value={Math.min(100, ratio)} tone={ratio > 90 ? "warn" : undefined} />{hoursLabel(consumed)}</td>
                     <td>{hoursLabel(project.estimatedHours - consumed)}</td>
-                    <td>{project.invoicingStatus}</td>
-                    <td><Badge value={project.paymentStatus} /></td>
+                    {showCommercials ? <td>{project.invoicingStatus}</td> : null}
+                    {showCommercials ? <td><Badge value={project.paymentStatus} /></td> : null}
                   </tr>
                 );
               })}

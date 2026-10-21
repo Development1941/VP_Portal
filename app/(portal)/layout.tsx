@@ -11,7 +11,7 @@ export default async function PortalLayout({ children }: { children: React.React
   if (!user) redirect("/login");
   const data = await loadWorkspace(user.id);
   return (
-    <Shell user={user} links={navigation(user)} notes={data.notifications} currency={data.currency}>
+    <Shell user={user} links={navigation(user)} notes={data.notifications} currency={data.currency} fx={data.fxRates[0]}>
       {children}
     </Shell>
   );
