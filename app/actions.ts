@@ -606,7 +606,7 @@ export async function uploadStatusSheetAction(_prev: FormState, form: FormData):
     if (file.size > 4 * 1024 * 1024) throw new PortalError("That file is larger than 4 MB.");
     const rows = parseStatusSheet(Buffer.from(await file.arrayBuffer()), file.name);
     const count = await db().saveStatusSheet(user, rows);
-    return `Updated ${count} status ${count === 1 ? "row" : "rows"}. Matching project, item, and date were kept as one row.`;
+    return `Replaced the status history with ${count} ${count === 1 ? "row" : "rows"}.`;
   });
 }
 

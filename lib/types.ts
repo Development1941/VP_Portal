@@ -272,6 +272,7 @@ export type StatusUpdate = {
   remarks: string;
   statusDate: string;
   sheetLabel?: string;
+  company?: string;
   fields?: Record<string, string>;
 };
 

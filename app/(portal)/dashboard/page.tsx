@@ -76,6 +76,7 @@ export default async function DashboardPage() {
                   <th>Item</th>
                   <th>Status</th>
                   <th>Task / Remarks</th>
+                  <th>Company</th>
                   <th>Date</th>
                   <th>Sheet</th>
                   {extras.map((column) => (
@@ -102,6 +103,7 @@ export default async function DashboardPage() {
                         <span className={`badge ${statusTone(row.status)}`}>{row.status || "—"}</span>
                       </td>
                       <td className="remarks">{row.remarks || "—"}</td>
+                      <td>{row.company || "—"}</td>
                       <td className="num">{prettyDate(row.statusDate)}</td>
                       <td className="num">{row.sheetLabel || "—"}</td>
                       {extras.map((column) => (

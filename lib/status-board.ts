@@ -1,9 +1,17 @@
 import type { StatusUpdate } from "@/lib/types";
 
-const STATUS_EDITORS = new Set(["director", "admin", "project_owner", "project_manager"]);
+export function canPublishStatus(user: { email: string; fullName: string }) {
+  const email = user.email.toLowerCase();
+  const name = user.fullName.toLowerCase();
+  return email === "owner@embee.local" || name.includes("gsvk");
+}
 
-export function canPublishStatus(user: { roleSlug: string }) {
-  return STATUS_EDITORS.has(user.roleSlug);
+export function visibleStatus<T extends { company?: string }>(user: { email: string; fullName: string }, rows: T[]) {
+  const email = user.email.toLowerCase();
+  const name = user.fullName.toLowerCase().trim();
+  const assureOnly = email === "rakhee@embee.local" || email === "brian@embee.local" || name === "rakhee" || name === "brian";
+  if (!assureOnly) return rows;
+  return rows.filter((row) => (row.company || "").trim().toLowerCase() === "assure");
 }
 
 export function formatSheetLabel(iso: string) {
@@ -26,6 +34,7 @@ export function presentStatus(row: StatusUpdate): StatusUpdate {
     remarks: row.remarks || "",
     statusDate,
     sheetLabel: (row.sheetLabel || "").trim() || formatSheetLabel(statusDate),
+    company: (row.company || "").trim(),
     fields,
   };
 }

@@ -3,7 +3,7 @@ import { formatSheetLabel } from "@/lib/status-board";
 import type { StatusUpdate } from "@/lib/types";
 import * as XLSX from "xlsx";
 
-type HeaderName = "S.no" | "Project" | "Sub Item" | "Status" | "Task/Remarks" | "Date" | "Sheet";
+type HeaderName = "S.no" | "Project" | "Sub Item" | "Status" | "Task/Remarks" | "Date" | "Sheet" | "Company";
 
 function normHeader(value: unknown) {
   return String(value ?? "").replace(/[\s.]+/g, "").toLowerCase();
@@ -18,6 +18,7 @@ function mapHeader(value: unknown): HeaderName | null {
   if (name === "sheet" || name === "sheetname" || name === "sheetlabel") return "Sheet";
   if (name.includes("status")) return "Status";
   if (name.includes("task") || name.includes("remark")) return "Task/Remarks";
+  if (name === "company" || name === "comapny" || name.includes("company")) return "Company";
   return null;
 }
 
@@ -127,17 +128,22 @@ function sheetRows(matrix: unknown[][], sheetName: string) {
   const remarksAt = at("Task/Remarks");
   const dateAt = at("Date");
   const sheetAt = at("Sheet");
+  const companyAt = at("Company");
   const parsed: StatusUpdate[] = [];
   let lastNo = "";
   let lastProject = "";
+  let lastCompany = "";
 
   for (const raw of rows.slice(headerAt + 1)) {
     const snoCell = snoAt >= 0 ? cellText(raw[snoAt]) : "";
     const projectCell = projectAt >= 0 ? cellText(raw[projectAt]) : "";
     const sno = snoCell || lastNo;
     const project = projectCell || lastProject;
+    const companyCell = companyAt >= 0 ? cellText(raw[companyAt]) : "";
+    const company = companyCell || lastCompany;
     if (sno) lastNo = sno;
     if (project) lastProject = project;
+    if (companyCell) lastCompany = companyCell;
     const subItem = subAt >= 0 ? cellText(raw[subAt]) : "";
     const status = statusAt >= 0 ? cellText(raw[statusAt]) : "";
     const remarks = remarksAt >= 0 ? cellText(raw[remarksAt]) : "";
@@ -154,6 +160,7 @@ function sheetRows(matrix: unknown[][], sheetName: string) {
       remarks,
       statusDate,
       sheetLabel: (sheetAt >= 0 ? cellText(raw[sheetAt]) : "") || sheetName || formatSheetLabel(statusDate),
+      company,
       fields: {},
     });
   }

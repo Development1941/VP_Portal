@@ -6,7 +6,7 @@ import { prettyDate, roundMoney } from "@/lib/format";
 import { assertIntake, billingModelFor, clientForProfile, isIntakeOwner, keepDelivery, sowDefaults, statusForDelivery, type IntakeRequest } from "@/lib/delivery";
 import { packHours, unpackHours } from "@/lib/health";
 import { PortalError } from "@/lib/form";
-import { canPublishStatus, presentStatus } from "@/lib/status-board";
+import { canPublishStatus, presentStatus, visibleStatus } from "@/lib/status-board";
 import { ALL_PERMISSIONS, type PermissionKey } from "@/lib/permissions";
 import { nextInvoiceStatus, resolveBillRate } from "@/lib/metrics";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
@@ -482,7 +482,7 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
     files: rows(fileRes).map(mapFile).filter((item) => ids.has(item.projectId)),
     workstreams: rows(workstreamRes).map(mapWorkstream),
     fxRates: await fxHistory(),
-    statusUpdates: await statusBoard(),
+    statusUpdates: visibleStatus(user, await statusBoard()),
   };
 }
 
@@ -500,7 +500,7 @@ async function statusBoard() {
   const supabase = await client();
   const full = await supabase
     .from("status_updates")
-    .select("sheet_no, project_name, sub_item, status, remarks, status_date, sheet_label, fields")
+    .select("sheet_no, project_name, sub_item, status, remarks, status_date, sheet_label, company, fields")
     .order("status_date", { ascending: false })
     .order("sheet_no");
   const data = full.error
@@ -521,6 +521,7 @@ async function statusBoard() {
       remarks: text(row.remarks),
       statusDate: text(row.status_date).slice(0, 10),
       sheetLabel: text(row.sheet_label),
+      company: text(row.company),
       fields: statusFields(row.fields),
     }),
   );
@@ -1628,7 +1629,7 @@ export async function setEscalationStatus(user: SessionUser, id: string, status:
 }
 
 export async function saveStatusSheet(user: SessionUser, rows: StatusUpdate[]) {
-  if (!canPublishStatus(user)) throw new PortalError("Only an admin or a project manager can upload the status sheet.");
+  if (!canPublishStatus(user)) throw new PortalError("Only GSVK SAI can upload the status sheet.");
   const supabase = await client();
   const payload = rows.map((row) => {
     const item = presentStatus(row);
@@ -1640,16 +1641,17 @@ export async function saveStatusSheet(user: SessionUser, rows: StatusUpdate[]) {
       remarks: item.remarks,
       status_date: item.statusDate,
       sheet_label: item.sheetLabel || "",
+      company: item.company || "",
       fields: item.fields ?? {},
     };
   });
+  const { error: clearError } = await supabase.from("status_updates").delete().gte("sheet_no", 0);
+  raise(clearError);
   for (let index = 0; index < payload.length; index += 400) {
-    const { error } = await supabase.from("status_updates").upsert(payload.slice(index, index + 400), {
-      onConflict: "project_name,sub_item,status_date",
-    });
+    const { error } = await supabase.from("status_updates").insert(payload.slice(index, index + 400));
     raise(error);
   }
-  await trail(user, "status.upload", "status_sheet", "status", `Uploaded ${rows.length} status ${rows.length === 1 ? "row" : "rows"}.`);
+  await trail(user, "status.upload", "status_sheet", "status", `Replaced the status history with ${rows.length} ${rows.length === 1 ? "row" : "rows"}.`);
   return rows.length;
 }
 
