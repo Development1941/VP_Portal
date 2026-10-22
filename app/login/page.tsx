@@ -3,7 +3,7 @@ import { Logo } from "@/components/brand/logo";
 import { ActionForm, Submit } from "@/components/common/forms";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { isSupabaseConfigured } from "@/lib/env";
-
+ 
 const ACCOUNTS = [
   { preset: "director", role: "Director / Super admin", email: "director@embee.local", note: "Harshit Bansal" },
   { preset: "owner", role: "Admin", email: "owner@embee.local", note: "GSVK SAI" },
