@@ -3,6 +3,7 @@ import { Logo } from "@/components/brand/logo";
 import { AccountMenu } from "@/components/layout/account-menu";
 import { CurrencySwitch } from "@/components/layout/currency-switch";
 import { SideNav } from "@/components/layout/nav";
+import { Sidebar } from "@/components/layout/sidebar";
 import { Menu } from "@/components/layout/menu";
 import { NoticeMenu } from "@/components/layout/notice-menu";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
@@ -32,13 +33,13 @@ export function Shell({
   return (
     <div className="app">
       <NoticeToasts notes={notes} />
-      <aside className="sidebar">
+      <Sidebar>
         <div className="brand">
           <Logo />
           <span>VP Portal</span>
         </div>
         <SideNav links={links} className="nav" />
-      </aside>
+      </Sidebar>
       <div className="workspace">
         <header className="topbar">
           <div className="topbar-start">

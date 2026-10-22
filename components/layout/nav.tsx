@@ -66,6 +66,7 @@ export function SideNav({ links, className }: { links: NavLink[]; className: str
                   key={link.href}
                   href={link.href}
                   aria-current={active ? "page" : undefined}
+                  title={link.label}
                   onClick={(event) => event.currentTarget.closest("details")?.removeAttribute("open")}
                 >
                   <span className="nav-ico">

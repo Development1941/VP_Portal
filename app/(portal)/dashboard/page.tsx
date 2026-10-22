@@ -9,7 +9,7 @@ import { hoursLabel, money, prettyDate } from "@/lib/format";
 import { nameOf, projectOf, requirePage } from "@/lib/page";
 import { dues, isOverdue, projectEconomics } from "@/lib/reports";
 import { showCommercials } from "@/lib/commercial";
-import { canPublishStatus, extraStatusColumns, groupStatus, latestStatus, statusTone } from "@/lib/status-board";
+import { canPublishStatus, extraStatusColumns, groupStatus, latestStatus, statusNeedsAttention, statusTone } from "@/lib/status-board";
 import { sowAttentionNote, sowNeedsAttention } from "@/lib/sow-board";
 import type { SowRecord } from "@/lib/types";
 
@@ -37,6 +37,7 @@ export default async function DashboardPage() {
   const sowStatus = data.sowRecords.filter((row) => row.kind === "status");
   const sowBids = data.sowRecords.filter((row) => row.kind === "bid");
   const sowAttention = data.sowRecords.filter(sowNeedsAttention);
+  const statusAttention = board.rows.filter((row) => statusNeedsAttention(row.status));
 
   return (
     <>
@@ -55,7 +56,7 @@ export default async function DashboardPage() {
           <Stat label="Unbilled work" value={money(data.projects.reduce((sum, project) => sum + projectEconomics(project, data).unbilled, 0), data.currency)} note="Approved and not invoiced" />
         </section>
       ) : null}
-      <section className="card status-board">
+      <section className="card status-board" id="project-status">
         <div className="card-head">
           <div>
             <h2>Project status</h2>
@@ -81,9 +82,7 @@ export default async function DashboardPage() {
                   <th>Item</th>
                   <th>Status</th>
                   <th>Task / Remarks</th>
-                  <th>Company</th>
                   <th>Date</th>
-                  <th>Sheet</th>
                   {extras.map((column) => (
                     <th key={column}>{column}</th>
                   ))}
@@ -108,9 +107,7 @@ export default async function DashboardPage() {
                         <span className={`badge ${statusTone(row.status)}`}>{row.status || "—"}</span>
                       </td>
                       <td className="remarks">{row.remarks || "—"}</td>
-                      <td>{row.company || "—"}</td>
                       <td className="num">{prettyDate(row.statusDate)}</td>
-                      <td className="num">{row.sheetLabel || "—"}</td>
                       {extras.map((column) => (
                         <td key={column}>{row.fields?.[column] || "—"}</td>
                       ))}
@@ -225,12 +222,21 @@ export default async function DashboardPage() {
           <ProjectHealthList projects={data.projects} milestones={data.milestones} timesheets={data.timesheets} />
         </section>
       ) : null}
-      <div className="split">
-        <section className="card">
+      <section className="card">
           <div className="card-head">
             <h2>Needs attention</h2>
           </div>
           <div className="list">
+            {statusAttention.map((row) => (
+              <Link key={`${row.sheetNo}-${row.project}-${row.subItem}`} href="#project-status">
+                <span>
+                  {row.project}
+                  {row.subItem ? ` · ${row.subItem}` : ""}
+                  {row.company ? ` · ${row.company}` : ""}
+                </span>
+                <Badge value={row.status.toLowerCase().includes("pending") ? "pending" : "not_started"} />
+              </Link>
+            ))}
             {sowAttention.map((row) => (
               <Link key={row.id} href="#sow-status">
                 <span>
@@ -272,28 +278,9 @@ export default async function DashboardPage() {
                 <Badge value={item.status} />
               </Link>
             ))}
-            {!sowAttention.length && !returned && !approvals.length && !(showCommercials && openDues.length) && !milestones.length ? <p className="empty">No items require attention.</p> : null}
+            {!statusAttention.length && !sowAttention.length && !returned && !approvals.length && !(showCommercials && openDues.length) && !milestones.length ? <p className="empty">No items require attention.</p> : null}
           </div>
         </section>
-        <section className="card">
-          <div className="card-head">
-            <h2>Notifications</h2>
-            <Link href="/notifications">All</Link>
-          </div>
-          <div className="list">
-            {data.notifications.slice(0, 5).map((note) => (
-              <Link key={note.id} href={note.href || "/notifications"}>
-                <span>
-                  <strong>{note.title}</strong>
-                  <br />
-                  <span className="muted">{note.body}</span>
-                </span>
-              </Link>
-            ))}
-            {!data.notifications.length ? <p className="empty">No notifications yet.</p> : null}
-          </div>
-        </section>
-      </div>
     </>
   );
 }

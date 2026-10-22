@@ -94,6 +94,11 @@ export function extraStatusColumns(rows: StatusUpdate[]) {
   return columns;
 }
 
+export function statusNeedsAttention(status: string) {
+  const value = status.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  return value === "pending" || value.includes("not started");
+}
+
 export function statusTone(status: string) {
   const value = status.toLowerCase();
   if (value.includes("block")) return "bad";

@@ -7,9 +7,7 @@ export function sowCompany(project: string) {
 }
 
 export function sowNeedsAttention(row: SowRecord) {
-  if (row.kind !== "status") return false;
-  if (row.changeRequest.trim()) return true;
-  return row.signature.trim().toLowerCase() !== "signed";
+  return row.kind === "status" && Boolean(row.changeRequest.trim());
 }
 
 export function sowAttentionNote(row: SowRecord) {
