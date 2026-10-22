@@ -16,7 +16,7 @@ export default async function InvoicesPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Commercial" title="Invoices" lede="Draft an invoice from approved billable hours in a date range. Lines are grouped by feature." />
+      <PageHeader eyebrow="Commercial" title="Invoices" />
       <section className="card">
         <div className="table-wrap">
           <table>
@@ -41,8 +41,8 @@ export default async function InvoicesPage() {
       </section>
       {can(user, "invoices.manage") ? (
         <section className="card">
-          <h2>Generate from approved time</h2>
-          <p className="muted">{open.length === 1 ? "1 invoice still has a balance." : `${open.length} invoices still have a balance.`} New drafts only pick up approved billable hours that are not already on an invoice.</p>
+          <h2>Create invoice</h2>
+          <p className="muted">{open.length === 1 ? "1 invoice has an open balance." : `${open.length} invoices have an open balance.`} Approved billable hours that are not already invoiced are included.</p>
           <ActionForm action={createInvoiceAction} className="form-grid">
             <label className="field">
               <span>Project</span>

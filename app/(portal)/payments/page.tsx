@@ -19,7 +19,7 @@ export default async function PaymentsPage({ searchParams }: { searchParams: Pro
 
   return (
     <>
-      <PageHeader eyebrow="Commercial" title="Payments" lede="Incoming receipts settle client invoices. Outgoing payouts pay the team. Every movement starts as initiated and moves through a status." />
+      <PageHeader eyebrow="Commercial" title="Payments" />
       <section className="card">
         <h2>Pending dues</h2>
         <div className="table-wrap">
@@ -126,7 +126,7 @@ function PaymentTable({
             ) : <Badge value={payment.status} />}
           </div>
         ))}
-        {!rows.length ? <p className="empty">None yet.</p> : null}
+        {!rows.length ? <p className="empty">No payments recorded.</p> : null}
       </div>
     </section>
   );

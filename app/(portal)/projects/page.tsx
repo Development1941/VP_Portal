@@ -15,7 +15,7 @@ export default async function ProjectsPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Delivery" title="Projects" lede="Every engagement has an owner and a team. You see the projects you own or belong to." />
+      <PageHeader eyebrow="Delivery" title="Projects" />
       <div className="cards">
         {data.projects.map((project) => {
           const economics = projectEconomics(project, data);

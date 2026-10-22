@@ -18,20 +18,20 @@ export default function LoginPage() {
   const demo = !isSupabaseConfigured();
   return (
     <div className="login">
-      <section className="poster" aria-label="Embee studio">
+      <section className="poster" aria-label="Embee">
         <div className="poster-brand">
           <Logo />
           <span>VP Portal</span>
         </div>
         <div className="poster-copy">
-          <p className="eyebrow">Studio operations</p>
-          <h1>The week, the work, and the invoice. One desk.</h1>
-          <p>Directors see the whole studio. Owners run delivery. The team logs the hours.</p>
+          <p className="eyebrow">Embee</p>
+          <h1>Project delivery and operations</h1>
+          <p>Intake, delivery, time, and billing for your organization.</p>
         </div>
         <ul className="poster-points">
-          <li>Projects, milestones, and the people on them</li>
-          <li>Daily time, billable and not, then approval</li>
-          <li>Rates, invoices, receipts, and team payouts</li>
+          <li>Projects, milestones, and assigned teams</li>
+          <li>Daily status reports and approvals</li>
+          <li>Rates, invoices, receipts, and payouts</li>
         </ul>
       </section>
       <section className="login-panel">
@@ -40,11 +40,11 @@ export default function LoginPage() {
           <div>
             <p className="eyebrow">Sign in</p>
             <h2>Welcome back</h2>
-            <p className="lede">Use your studio email. Sample seats are listed under the form.</p>
+            <p className="lede">Sign in with your work email.</p>
           </div>
           <label className="field">
             <span>Email</span>
-            <input name="email" type="email" autoComplete="username" placeholder="you@studio.com" inputMode="email" />
+            <input name="email" type="email" autoComplete="username" placeholder="name@company.com" inputMode="email" />
           </label>
           <label className="field">
             <span>Password</span>
@@ -52,7 +52,7 @@ export default function LoginPage() {
           </label>
           <Submit variant="block">Sign in</Submit>
           <div className="account-list">
-            <p>{demo ? "Local demo. Password demo123." : "Sample studio accounts. Password demo123."}</p>
+            <p>{demo ? "Demo accounts" : "Organization accounts"}</p>
             {ACCOUNTS.map((account) => (
               <button key={account.preset} className="account" name="preset" value={account.preset}>
                 <span>

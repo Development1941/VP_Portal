@@ -6,6 +6,7 @@ import { prettyDate, roundMoney } from "@/lib/format";
 import { assertIntake, billingModelFor, clientForProfile, isIntakeOwner, keepDelivery, sowDefaults, statusForDelivery, type IntakeRequest } from "@/lib/delivery";
 import { packHours, unpackHours } from "@/lib/health";
 import { PortalError } from "@/lib/form";
+import { canPublishStatus, presentStatus } from "@/lib/status-board";
 import { ALL_PERMISSIONS, type PermissionKey } from "@/lib/permissions";
 import { nextInvoiceStatus, resolveBillRate } from "@/lib/metrics";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
@@ -23,6 +24,7 @@ import type {
   RateCard,
   Role,
   SessionUser,
+  StatusUpdate,
   Task,
   Timesheet,
   Workspace,
@@ -484,22 +486,44 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
   };
 }
 
+function statusFields(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const fields: Record<string, string> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (item == null || item === "") continue;
+    fields[key] = String(item);
+  }
+  return fields;
+}
+
 async function statusBoard() {
   const supabase = await client();
-  const { data, error } = await supabase
+  const full = await supabase
     .from("status_updates")
-    .select("sheet_no, project_name, sub_item, status, remarks, status_date")
+    .select("sheet_no, project_name, sub_item, status, remarks, status_date, sheet_label, fields")
     .order("status_date", { ascending: false })
     .order("sheet_no");
-  if (error) return [];
-  return (data ?? []).map((row) => ({
-    sheetNo: num(row.sheet_no),
-    project: text(row.project_name),
-    subItem: text(row.sub_item),
-    status: text(row.status),
-    remarks: text(row.remarks),
-    statusDate: text(row.status_date).slice(0, 10),
-  }));
+  const data = full.error
+    ? (
+        await supabase
+          .from("status_updates")
+          .select("sheet_no, project_name, sub_item, status, remarks, status_date")
+          .order("status_date", { ascending: false })
+          .order("sheet_no")
+      ).data
+    : full.data;
+  return ((data ?? []) as Record<string, unknown>[]).map((row) =>
+    presentStatus({
+      sheetNo: num(row.sheet_no),
+      project: text(row.project_name),
+      subItem: text(row.sub_item),
+      status: text(row.status),
+      remarks: text(row.remarks),
+      statusDate: text(row.status_date).slice(0, 10),
+      sheetLabel: text(row.sheet_label),
+      fields: statusFields(row.fields),
+    }),
+  );
 }
 
 async function fxHistory() {
@@ -1601,6 +1625,32 @@ export async function setEscalationStatus(user: SessionUser, id: string, status:
   const { error: updateError } = await supabase.from("escalations").update({ status }).eq("id", id);
   raise(updateError);
   await trail(user, "escalation.status", "escalation", id, `Set escalation to ${status.replaceAll("_", " ")}.`);
+}
+
+export async function saveStatusSheet(user: SessionUser, rows: StatusUpdate[]) {
+  if (!canPublishStatus(user)) throw new PortalError("Only an admin or a project manager can upload the status sheet.");
+  const supabase = await client();
+  const payload = rows.map((row) => {
+    const item = presentStatus(row);
+    return {
+      sheet_no: item.sheetNo,
+      project_name: item.project,
+      sub_item: item.subItem,
+      status: item.status,
+      remarks: item.remarks,
+      status_date: item.statusDate,
+      sheet_label: item.sheetLabel || "",
+      fields: item.fields ?? {},
+    };
+  });
+  for (let index = 0; index < payload.length; index += 400) {
+    const { error } = await supabase.from("status_updates").upsert(payload.slice(index, index + 400), {
+      onConflict: "project_name,sub_item,status_date",
+    });
+    raise(error);
+  }
+  await trail(user, "status.upload", "status_sheet", "status", `Uploaded ${rows.length} status ${rows.length === 1 ? "row" : "rows"}.`);
+  return rows.length;
 }
 
 export async function saveWorkstream(user: SessionUser, input: { id: string; ownerName: string; targetDate: string; status: Workstream["status"] }) {

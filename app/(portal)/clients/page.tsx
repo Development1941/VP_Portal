@@ -12,7 +12,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
 
   return (
     <>
-      <PageHeader eyebrow="Delivery" title="Clients" lede="Companies you bill, with the contact, tax id, and billing address used on invoices." />
+      <PageHeader eyebrow="Delivery" title="Clients" />
       <div className="table-wrap card">
         <table>
           <thead>

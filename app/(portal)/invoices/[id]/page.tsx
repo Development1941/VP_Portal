@@ -10,9 +10,9 @@ import { clientOf, projectOf, requirePage } from "@/lib/page";
 export default async function InvoicePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { user, data, allowed } = await requirePage(["invoices.view"]);
-  if (!allowed) return <PageHeader eyebrow="Invoice" title="Invoices are limited to commercial roles." />;
+  if (!allowed) return <PageHeader eyebrow="Invoice" title="You do not have access to this invoice." />;
   const invoice = data.invoices.find((item) => item.id === id);
-  if (!invoice) return <PageHeader eyebrow="Invoice" title="That invoice is not available." />;
+  if (!invoice) return <PageHeader eyebrow="Invoice" title="Invoice not found." />;
   const lines = data.lines.filter((line) => line.invoiceId === invoice.id);
   const figures = invoiceFigures(invoice, data.lines);
   const paid = amountPaid(invoice.id, data.payments);
@@ -36,7 +36,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
       <article className="sheet invoice-sheet">
         <div className="card-head">
           <div>
-            <p className="eyebrow">Embee studio</p>
+            <p className="eyebrow">Embee</p>
             <h2>{client?.company}</h2>
             <p className="muted">{client?.address}</p>
             <p className="muted">{client?.billingEmail} · {client?.taxId}</p>

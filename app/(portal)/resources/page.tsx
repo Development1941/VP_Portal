@@ -16,7 +16,7 @@ export default async function ResourcesPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Delivery control" title="Resource allocation" lede="Only finalised SOWs appear here. Activate a project to open its task page." />
+      <PageHeader eyebrow="Operations" title="Resource allocation" />
       <section className="card">
         <div className="table-wrap">
           <table>

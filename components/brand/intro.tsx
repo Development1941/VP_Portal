@@ -19,7 +19,7 @@ export function Intro() {
   if (!visible) return null;
   return (
     <div className="intro">
-      <BrandLoader label="Opening Embee" />
+      <BrandLoader label="Embee" />
     </div>
   );
 }

@@ -11,7 +11,7 @@ export default async function NotificationsPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Administration" title="Notifications" lede="A filled DSR names the person, the date, and the project. Task, time, and payment updates land here too.">
+      <PageHeader eyebrow="Account" title="Notifications">
         {unread ? (
           <ActionForm action={markReadAction}>
             <input type="hidden" name="id" value="all" />
@@ -20,7 +20,7 @@ export default async function NotificationsPage() {
         ) : null}
       </PageHeader>
       <section className="card">
-        {!data.notifications.length ? <Empty>You are caught up.</Empty> : null}
+        {!data.notifications.length ? <Empty>No notifications.</Empty> : null}
         <div className="list">
           {data.notifications.map((note) => (
             <div key={note.id} className="quiet-row">

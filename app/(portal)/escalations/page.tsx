@@ -16,7 +16,7 @@ export default async function EscalationsPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Delivery control" title="Escalations and blockers" lede="One consolidated tracker for management review. Raise new items from the Project tasks page." />
+      <PageHeader eyebrow="Operations" title="Escalations" />
       <div className="stats">
         <Stat label="Total raised" value={String(data.escalations.length)} />
         <Stat label="Open" value={String(open)} />

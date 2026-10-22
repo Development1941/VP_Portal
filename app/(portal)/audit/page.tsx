@@ -8,11 +8,11 @@ export default async function AuditPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Administration" title="Audit log" lede="Who changed a client, a rate, a timesheet decision, an invoice, or a payment." />
+      <PageHeader eyebrow="Administration" title="Audit log" />
       <section className="card">
         <div className="table-wrap">
           <table>
-            <thead><tr><th>When</th><th>Person</th><th>Action</th><th>What happened</th></tr></thead>
+            <thead><tr><th>When</th><th>Person</th><th>Action</th><th>Details</th></tr></thead>
             <tbody>
               {data.audit.map((entry) => (
                 <tr key={entry.id}>

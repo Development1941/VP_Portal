@@ -12,13 +12,13 @@ export default async function SettingsPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Administration" title="Roles and system" lede="Director keeps every permission. Scrum Master (SM) uploads sprints and milestones that the project owner and PM can see. Other roles stay a checklist, and new roles appear in the team directory immediately." />
+      <PageHeader eyebrow="Administration" title="Settings" />
       <section className="card">
         <h2>Add a role</h2>
         <ActionForm action={saveRoleAction} className="form-grid">
           <label className="field"><span>Name</span><input name="name" required placeholder="Client" /></label>
           <label className="field"><span>Slug</span><input name="slug" placeholder="client" /></label>
-          <label className="field wide"><span>Description</span><input name="description" placeholder="What this seat is for" /></label>
+          <label className="field wide"><span>Description</span><input name="description" placeholder="Role description" /></label>
           <Submit>Create role</Submit>
         </ActionForm>
       </section>
@@ -34,7 +34,7 @@ export default async function SettingsPage() {
               <Badge value={role.locked ? "locked" : role.isSystem ? "system" : "custom"} />
             </div>
             {role.locked ? (
-              <p>The director role stays fully enabled so the studio always has a super admin. It cannot be narrowed.</p>
+              <p>This role has full access. Its permissions cannot be changed.</p>
             ) : (
               <>
                 <ActionForm action={saveRoleAction} className="form-grid">
@@ -69,18 +69,13 @@ export default async function SettingsPage() {
       })}
       {!isSupabaseConfigured() ? (
         <section className="card">
-          <h2>Demo workspace</h2>
-          <p className="muted">Sample clients, projects, and logins live in .data/store.json. Resetting restores the original studio.</p>
+          <h2>Sample data</h2>
+          <p className="muted">Restore the original sample workspace.</p>
           <form action={resetDemoAction}>
-            <button className="btn danger">Reset demo data</button>
+            <button className="btn danger">Reset sample data</button>
           </form>
         </section>
-      ) : (
-        <section className="card">
-          <h2>Supabase</h2>
-          <p>This portal is reading and writing your Supabase project. Apply supabase/schema.sql if a screen says the schema is missing, then create the first user in Authentication and point their profile at the director role.</p>
-        </section>
-      )}
+      ) : null}
     </>
   );
 }

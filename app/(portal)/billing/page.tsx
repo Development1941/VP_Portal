@@ -15,7 +15,7 @@ export default async function BillingPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Commercial" title="Feature billing cards" lede="Each feature carries its own rate or fixed fee. Hours roll up here before they become an invoice." />
+      <PageHeader eyebrow="Commercial" title="Billing" />
       <div className="cards">
         {data.features.map((feature) => {
           const project = projectOf(data, feature.projectId);
@@ -41,7 +41,7 @@ export default async function BillingPage() {
       {showCommercials && data.fxRates.length ? (
         <section className="card">
           <h2>Market rates on record</h2>
-          <p className="muted">Each currency change converts the amounts at the published market rate and keeps that rate.</p>
+          <p className="muted">Rates recorded when the organization currency changes.</p>
           <div className="table-wrap">
             <table>
               <thead><tr><th>From</th><th>To</th><th>Rate</th><th>Source</th><th>Recorded</th></tr></thead>
@@ -62,8 +62,7 @@ export default async function BillingPage() {
       ) : null}
       {can(user, "billing.rates") ? (
         <section className="card">
-          <h2>Hourly rate cards</h2>
-          <p className="muted">Resolution order when a feature has no hourly rate: project member, person, project, role, then the studio default.</p>
+          <h2>Hourly rates</h2>
           <div className="table-wrap">
             <table>
               <thead><tr><th>Label</th><th>Scope</th><th>Applies to</th><th>From</th><th className="num">Rate</th></tr></thead>
@@ -92,7 +91,7 @@ export default async function BillingPage() {
                 <option value="feature">Feature</option>
               </select>
             </label>
-            <label className="field"><span>Target id</span><input name="targetId" placeholder="Leave blank for the studio default" /></label>
+            <label className="field"><span>Target id</span><input name="targetId" placeholder="Leave blank for the organization default" /></label>
             <label className="field"><span>Hourly rate</span><input type="number" name="hourlyRate" min="0" required /></label>
             <label className="field"><span>Currency</span><input name="currency" defaultValue={data.currency} readOnly /></label>
             <label className="field"><span>Effective from</span><input type="date" name="effectiveFrom" defaultValue={todayIso()} /></label>

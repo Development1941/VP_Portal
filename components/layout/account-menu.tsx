@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { LogOut, Settings, UserRound } from "lucide-react";
 import { signOutAction } from "@/app/actions";
 import { initials } from "@/lib/format";
 import { Menu } from "@/components/layout/menu";
@@ -16,10 +17,10 @@ export function AccountMenu({ user, settings }: { user: SessionUser; settings: b
           <strong>{user.fullName}</strong>
           <small>{user.roleName}</small>
         </div>
-        <Link href="/profile">Profile</Link>
-        {settings ? <Link href="/settings">Settings</Link> : null}
+        <Link href="/profile"><UserRound strokeWidth={1.75} aria-hidden /> Profile</Link>
+        {settings ? <Link href="/settings"><Settings strokeWidth={1.75} aria-hidden /> Settings</Link> : null}
         <form action={signOutAction}>
-          <button type="submit">Sign out</button>
+          <button type="submit"><LogOut strokeWidth={1.75} aria-hidden /> Sign out</button>
         </form>
       </div>
     </Menu>

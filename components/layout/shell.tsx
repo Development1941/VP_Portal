@@ -1,3 +1,4 @@
+import { Menu as MenuIcon } from "lucide-react";
 import { Logo } from "@/components/brand/logo";
 import { AccountMenu } from "@/components/layout/account-menu";
 import { CurrencySwitch } from "@/components/layout/currency-switch";
@@ -42,7 +43,10 @@ export function Shell({
         <header className="topbar">
           <div className="topbar-start">
             <Menu className="nav-toggle">
-              <summary className="btn ghost menu-btn">Menu</summary>
+              <summary className="btn ghost menu-btn">
+                <MenuIcon strokeWidth={1.75} aria-hidden />
+                Menu
+              </summary>
               <div className="drawer">
                 <SideNav links={links} className="mobile-nav" />
               </div>

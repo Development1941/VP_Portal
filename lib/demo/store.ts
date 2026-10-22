@@ -22,11 +22,13 @@ import type {
   Role,
   SessionUser,
   Task,
+  StatusUpdate,
   Timesheet,
   Workspace,
   Workstream,
 } from "@/lib/types";
 import { STATUS_UPDATES } from "@/lib/demo/status-board";
+import { canPublishStatus, mergeStatus, presentStatus } from "@/lib/status-board";
 import { buildSeed, type DemoStore, type DemoUser } from "@/lib/demo/seed";
 
 const filePath = path.join(process.cwd(), ".data", "store.json");
@@ -336,7 +338,7 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
     files: (store.files ?? []).filter((item) => ids.has(item.projectId)),
     workstreams: store.workstreams ?? [],
     fxRates: store.fxRates ?? [],
-    statusUpdates: STATUS_UPDATES,
+    statusUpdates: (store.statusSheetReady ? store.statusUpdates ?? [] : STATUS_UPDATES).map(presentStatus),
   };
 }
 
@@ -1141,6 +1143,17 @@ export function setEscalationStatus(user: SessionUser, id: string, status: Escal
     if (!can(user, "projects.manage") && !can(user, "projects.view_all") && !can(user, "tasks.manage")) throw new PortalError("You cannot update that escalation.");
     item.status = status;
     audit(store, user, "escalation.status", "escalation", id, `Set escalation to ${status.replaceAll("_", " ")}.`);
+  });
+}
+
+export function saveStatusSheet(user: SessionUser, rows: StatusUpdate[]) {
+  if (!canPublishStatus(user)) throw new PortalError("Only an admin or a project manager can upload the status sheet.");
+  return mutate((store) => {
+    const current = store.statusSheetReady ? store.statusUpdates ?? [] : STATUS_UPDATES;
+    store.statusUpdates = mergeStatus(current, rows);
+    store.statusSheetReady = true;
+    audit(store, user, "status.upload", "status_sheet", "status", `Uploaded ${rows.length} status ${rows.length === 1 ? "row" : "rows"}.`);
+    return rows.length;
   });
 }
 

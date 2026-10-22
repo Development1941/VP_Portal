@@ -9,6 +9,7 @@ import { REQUIREMENT_SOURCES, sowDefaults } from "@/lib/delivery";
 import { prettyDate } from "@/lib/format";
 import { asPermissions, list, num, str, type FormState, PortalError } from "@/lib/form";
 import { getSession, signIn, signOut } from "@/lib/session";
+import { parseStatusSheet } from "@/lib/status-sheet";
 import type { Client, Escalation, Feature, Milestone, Payment, Project, RateCard, Role, Task, Timesheet, Workstream } from "@/lib/types";
 
 function choice<T extends string>(form: FormData, key: string, options: readonly T[], fallback: T): T {
@@ -595,6 +596,18 @@ export async function saveDeliverySheetAction(_prev: FormState, form: FormData) 
     }));
     await db().saveDeliverySheet(user, projectId, rows);
   }, "Task sheet saved.");
+}
+
+export async function uploadStatusSheetAction(_prev: FormState, form: FormData): Promise<FormState> {
+  return run(async () => {
+    const user = await actor();
+    const file = filesOf(form, "sheet")[0];
+    if (!file) throw new PortalError("Choose an Excel or CSV file.");
+    if (file.size > 4 * 1024 * 1024) throw new PortalError("That file is larger than 4 MB.");
+    const rows = parseStatusSheet(Buffer.from(await file.arrayBuffer()), file.name);
+    const count = await db().saveStatusSheet(user, rows);
+    return `Updated ${count} status ${count === 1 ? "row" : "rows"}. Matching project, item, and date were kept as one row.`;
+  });
 }
 
 export async function addDeliveryTaskAction(_prev: FormState, form: FormData) {

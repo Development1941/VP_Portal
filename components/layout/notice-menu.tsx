@@ -12,7 +12,7 @@ export function NoticeMenu({ notes }: { notes: Notification[] }) {
   return (
     <Menu className="account-menu">
       <summary className="bell" aria-label={unread > 0 ? `${unread} unread notifications` : "Notifications"}>
-        <Bell />
+        <Bell strokeWidth={1.75} />
         {unread > 0 ? <span className="bell-dot">{unread}</span> : null}
       </summary>
       <div className="account-drop notice-drop">
@@ -20,7 +20,7 @@ export function NoticeMenu({ notes }: { notes: Notification[] }) {
           <strong>Notifications</strong>
           <small>{unread > 0 ? `${unread} unread` : "Caught up"}</small>
         </div>
-        {!shown.length ? <p className="notice-empty">You are caught up.</p> : null}
+        {!shown.length ? <p className="notice-empty">No new notifications.</p> : null}
         {shown.map((note) => (
           <div key={note.id} className={note.read ? "notice-item" : "notice-item unread"}>
             <strong>{note.title}</strong>

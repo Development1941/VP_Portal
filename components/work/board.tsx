@@ -146,7 +146,7 @@ export function WorkBoard({
                     <input type="hidden" name="status" value={column.status} />
                     <label className="field">
                       <span>Card</span>
-                      <input name="title" required placeholder="What needs doing?" autoFocus />
+                      <input name="title" required placeholder="Task title" autoFocus />
                     </label>
                     <label className="field">
                       <span>Project</span>

@@ -50,8 +50,8 @@ export function DsrForm({
         </select>
       </label>
       <label className="field wide">
-        <span>What did you do?</span>
-        <input name="description" placeholder="Daily status for this project" required />
+        <span>Work completed</span>
+        <input name="description" placeholder="Summary of work completed" required />
       </label>
       <label className="check">
         <input type="checkbox" name="billable" defaultChecked />

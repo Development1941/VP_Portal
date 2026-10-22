@@ -10,6 +10,7 @@ export type DemoStore = Omit<Workspace, "users"> & {
   organizations: { id: string; name: string; status: "active" | "inactive" }[];
   rosterApplied?: boolean;
   costsCleared?: boolean;
+  statusSheetReady?: boolean;
 };
 
 export function buildSeed(): DemoStore {

@@ -12,7 +12,7 @@ import { clientOf, nameOf, requirePage } from "@/lib/page";
 export default async function SowAdminPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { user, data, allowed } = await requirePage(["projects.view", "projects.view_all", "projects.manage", "projects.intake"]);
-  if (!allowed || !canSeeIntake(user)) return <Denied title="SOW admin finalisation" />;
+  if (!allowed || !canSeeIntake(user)) return <Denied title="SOW finalisation" />;
   const project = data.projects.find((item) => item.id === id);
   if (!project) notFound();
   const consumed = hoursConsumed(project.id, data.timesheets, data.tasks);
@@ -22,7 +22,7 @@ export default async function SowAdminPage({ params }: { params: Promise<{ id: s
 
   return (
     <>
-      <PageHeader eyebrow="Delivery control" title="SOW admin finalisation" lede="Admins review and finalise the SOW. Finalising unlocks resource allocation.">
+      <PageHeader eyebrow="Operations" title="SOW finalisation">
         <Link href="/sow">Back to SOW list</Link>
       </PageHeader>
       <section className="card">

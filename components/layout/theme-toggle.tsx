@@ -36,8 +36,8 @@ export function ThemeToggle() {
       onClick={toggle}
     >
       <span className="theme-knob" />
-      <Sun />
-      <Moon />
+      <Sun strokeWidth={1.75} />
+      <Moon strokeWidth={1.75} />
     </button>
   );
 }

@@ -8,11 +8,7 @@ export default async function HealthPage() {
 
   return (
     <>
-      <PageHeader
-        eyebrow="Director"
-        title="Project health"
-        lede="Each sprint’s allocated hours are the expectation. Health compares logged hours with that expectation and with how many sprints are finished. Completion is finished sprints divided by every sprint on the project."
-      />
+      <PageHeader eyebrow="Delivery" title="Project health" />
       <ProjectHealthList projects={data.projects} milestones={data.milestones} timesheets={data.timesheets} />
     </>
   );

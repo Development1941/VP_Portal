@@ -1,4 +1,29 @@
 import Link from "next/link";
+import {
+  Bell,
+  Building2,
+  CalendarClock,
+  ChartColumn,
+  FileText,
+  FolderKanban,
+  Gauge,
+  HeartPulse,
+  History,
+  Inbox,
+  LayoutDashboard,
+  ListTodo,
+  PieChart,
+  Receipt,
+  ScrollText,
+  Settings,
+  SquareKanban,
+  TriangleAlert,
+  UserRound,
+  Users,
+  UsersRound,
+  Wallet,
+  type LucideIcon,
+} from "lucide-react";
 import { labelize } from "@/lib/format";
 
 const TONES: Record<string, string> = {
@@ -52,6 +77,35 @@ export function Badge({ value }: { value: string }) {
   return <span className={`badge ${TONES[value] ?? ""}`}>{labelize(value).replaceAll(".", " ")}</span>;
 }
 
+const PAGE_ICONS: Record<string, LucideIcon> = {
+  Dashboard: LayoutDashboard,
+  "My work": SquareKanban,
+  "Project board": SquareKanban,
+  "Daily status report": CalendarClock,
+  "Daily status reports": CalendarClock,
+  "Project intake": Inbox,
+  "Statements of work": ScrollText,
+  "SOW finalisation": ScrollText,
+  "Resource allocation": UsersRound,
+  Tasks: ListTodo,
+  Utilization: Gauge,
+  "Utilization and billing": Gauge,
+  Escalations: TriangleAlert,
+  Projects: FolderKanban,
+  "Project health": HeartPulse,
+  Clients: Building2,
+  Billing: Receipt,
+  Invoices: FileText,
+  Payments: Wallet,
+  Profitability: PieChart,
+  "Project progress": ChartColumn,
+  Team: Users,
+  "Audit log": History,
+  Settings: Settings,
+  Profile: UserRound,
+  Notifications: Bell,
+};
+
 export function PageHeader({
   eyebrow,
   title,
@@ -63,12 +117,20 @@ export function PageHeader({
   lede?: string;
   children?: React.ReactNode;
 }) {
+  const Icon = PAGE_ICONS[title];
   return (
     <header className="page-head">
-      <div>
-        <p className="eyebrow">{eyebrow}</p>
-        <h1>{title}</h1>
-        {lede ? <p className="lede">{lede}</p> : null}
+      <div className="page-title">
+        {Icon ? (
+          <span className="page-mark">
+            <Icon strokeWidth={1.75} aria-hidden />
+          </span>
+        ) : null}
+        <div>
+          <p className="eyebrow">{eyebrow}</p>
+          <h1>{title}</h1>
+          {lede ? <p className="lede">{lede}</p> : null}
+        </div>
       </div>
       {children ? <div className="actions">{children}</div> : null}
     </header>
@@ -97,9 +159,9 @@ export function Meter({ value, tone }: { value: number; tone?: string }) {
 export function Denied({ title }: { title: string }) {
   return (
     <section className="card">
-      <PageHeader eyebrow="Restricted" title={title} lede="This area follows the permission matrix. A director can grant it to another role from Settings, including a future Finance or Client role, without changing the screens." />
+      <PageHeader eyebrow="Access" title={title} lede="You do not have permission to view this page." />
       <Link href="/dashboard" className="btn ghost">
-        Back to the desk
+        Back to dashboard
       </Link>
     </section>
   );

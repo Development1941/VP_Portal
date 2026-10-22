@@ -12,7 +12,7 @@ export default async function ProfilePage() {
 
   return (
     <>
-      <PageHeader eyebrow="Account" title="Profile" lede="Update your photo and the personal details other people see on your projects." />
+      <PageHeader eyebrow="Account" title="Profile" />
       <section className="card profile-layout">
         <ActionForm action={saveAvatarAction} className="profile-photo">
           <div className="avatar-btn avatar-lg">
@@ -31,7 +31,7 @@ export default async function ProfilePage() {
           </label>
           <label className="field">
             <span>Title</span>
-            <input name="title" defaultValue={user.title} placeholder="Developer, Designer, Scrum Master" />
+            <input name="title" defaultValue={user.title} placeholder="Job title" />
           </label>
           <label className="field">
             <span>Phone</span>
@@ -47,7 +47,7 @@ export default async function ProfilePage() {
           </label>
           <label className="field wide">
             <span>About</span>
-            <textarea name="about" rows={4} defaultValue={user.about} placeholder="A short note about you" />
+            <textarea name="about" rows={4} defaultValue={user.about} placeholder="Professional summary" />
           </label>
           <Submit>Save profile</Submit>
         </ActionForm>

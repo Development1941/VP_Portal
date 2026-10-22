@@ -970,15 +970,50 @@ create table if not exists public.status_updates (
   status text not null default '',
   remarks text not null default '',
   status_date date not null,
+  sheet_label text not null default '',
+  fields jsonb not null default '{}'::jsonb,
   unique (project_name, sub_item, status_date)
 );
+
+alter table public.status_updates add column if not exists sheet_label text not null default '';
+alter table public.status_updates add column if not exists fields jsonb not null default '{}'::jsonb;
+
+update public.status_updates
+set sheet_label = to_char(status_date, 'DD-MM-YYYY')
+where sheet_label = '';
 
 alter table public.status_updates enable row level security;
 
 drop policy if exists status_updates_read on public.status_updates;
 create policy status_updates_read on public.status_updates for select to authenticated using (true);
 
-grant select on public.status_updates to authenticated;
+create or replace function public.status_sheet_editor()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.profiles p
+    join public.roles r on r.id = p.role_id
+    where p.id = auth.uid()
+      and p.status = 'active'
+      and r.slug in ('director', 'admin', 'project_owner', 'project_manager')
+  );
+$$;
+
+drop policy if exists status_updates_write on public.status_updates;
+drop policy if exists status_updates_insert on public.status_updates;
+drop policy if exists status_updates_update on public.status_updates;
+create policy status_updates_insert on public.status_updates for insert to authenticated
+  with check (public.status_sheet_editor());
+create policy status_updates_update on public.status_updates for update to authenticated
+  using (public.status_sheet_editor())
+  with check (public.status_sheet_editor());
+
+grant select, insert, update on public.status_updates to authenticated;
 
 with ranked as (
   select id, row_number() over (

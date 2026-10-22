@@ -19,7 +19,7 @@ export default async function IntakePage() {
 
   return (
     <div className="intake-lock">
-      <PageHeader eyebrow="Delivery control" title="Project intake" lede="A client, an admin, or the director files the request. Completing it opens SOW and notifies those roles." />
+      <PageHeader eyebrow="Operations" title="Project intake" />
       {filing ? (
         <section className="card intake-form">
           <ActionForm action={submitIntakeAction} className="intake-fields">

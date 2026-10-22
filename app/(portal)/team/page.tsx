@@ -16,7 +16,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
 
   return (
     <>
-      <PageHeader eyebrow="Administration" title="Team" lede="One directory for developers, designers, QA, and anyone else. The role on each person decides what they can open." />
+      <PageHeader eyebrow="Administration" title="Team" />
       <section className="card">
         <div className="table-wrap">
           <table>
@@ -45,7 +45,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
             <input type="hidden" name="id" value={editing?.id ?? ""} />
             <label className="field"><span>Full name</span><input name="fullName" defaultValue={editing?.fullName} required /></label>
             <label className="field"><span>Email</span><input type="email" name="email" defaultValue={editing?.email} required /></label>
-            <label className="field"><span>Title</span><input name="title" defaultValue={editing?.title} placeholder="Developer, Designer, QA" /></label>
+            <label className="field"><span>Title</span><input name="title" defaultValue={editing?.title} placeholder="Job title" /></label>
             <label className="field"><span>Phone</span><input name="phone" defaultValue={editing?.phone} /></label>
             <label className="field">
               <span>Role</span>

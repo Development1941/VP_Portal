@@ -22,7 +22,7 @@ export default async function UtilizationPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Delivery control" title={showCommercials ? "Resource billing and hourly utilization" : "Hourly utilization"} lede={`Week of ${prettyDate(start)}. Hours against an 8 hour day.`} />
+      <PageHeader eyebrow="Operations" title={showCommercials ? "Utilization and billing" : "Utilization"} lede={`Week of ${prettyDate(start)}`} />
       <section className="card">
         <div className="table-wrap">
           <table>

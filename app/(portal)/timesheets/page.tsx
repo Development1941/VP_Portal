@@ -38,10 +38,10 @@ function DirectorDsr({ data, query }: { data: Workspace; query: { role?: string;
 
   return (
     <>
-      <PageHeader eyebrow="Time" title="Daily status report" lede="Directors do not file a DSR. Choose a role, then a person, to read the reports they have filed." />
+      <PageHeader eyebrow="Time" title="Daily status reports" />
       <section className="card">
         <h2>Role</h2>
-        {!roles.length ? <Empty>No other roles have people on the team yet.</Empty> : null}
+        {!roles.length ? <Empty>No team members are available.</Empty> : null}
         <div className="pick-grid">
           {roles.map((item) => {
             const count = people.filter((person) => person.roleId === item.id).length;
@@ -150,7 +150,7 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
 
   return (
     <>
-      <PageHeader eyebrow="Time" title="Daily status report" lede="Pick the project you worked on, then save the day. The project manager is notified, and only that project’s owner can read the team’s DSR.">
+      <PageHeader eyebrow="Time" title="Daily status report">
         <a className="btn ghost" href={weekHref(addDays(weekStart, -7), selected?.id ?? "")}>
           Previous week
         </a>
@@ -182,8 +182,8 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
       </section>
       {fillsOwnDsr(user) ? (
         <section className="card">
-          <h2>Fill DSR</h2>
-          <p className="muted">One DSR is kept for each day. Saving the same date again replaces that report.</p>
+          <h2>Submit report</h2>
+          <p className="muted">One report is stored per day. Saving the same date replaces it.</p>
           {entitled.length ? (
             <DsrForm
               projects={entitled.map((project) => ({ id: project.id, name: project.name }))}
@@ -252,9 +252,8 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
       </section>
       {teamProject ? (
         <section className="card">
-          <h2>Team DSR · {teamProject.name}</h2>
-          <p className="muted">These are the daily reports filed on this project. Another project’s owner does not see them.</p>
-          {!team.length ? <Empty>No one else has filed a DSR on this project yet.</Empty> : null}
+          <h2>Team reports · {teamProject.name}</h2>
+          {!team.length ? <Empty>No team reports for this project.</Empty> : null}
           <div className="list">
             {team.map((entry) => (
               <div key={entry.id} className="quiet-row">

@@ -10,7 +10,7 @@ type CacheCompiler = {
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
-  serverExternalPackages: ["@supabase/ssr", "@supabase/supabase-js", "@supabase/auth-js", "@supabase/storage-js"],
+  serverExternalPackages: ["@supabase/ssr", "@supabase/supabase-js", "@supabase/auth-js", "@supabase/storage-js", "xlsx"],
   webpack: (config) => {
     config.plugins.push({
       apply(compiler: CacheCompiler) {
@@ -24,6 +24,7 @@ const nextConfig: NextConfig = {
   },
   experimental: {
     devtoolSegmentExplorer: false,
+    serverActions: { bodySizeLimit: "4mb" },
   },
   images: {
     remotePatterns: [

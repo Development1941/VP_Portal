@@ -30,7 +30,7 @@ export default async function DeliveryPage({ searchParams }: { searchParams: Pro
 
   return (
     <>
-      <PageHeader eyebrow="Delivery control" title="Project tasks" lede="All active projects in one place. Project owners create and edit tasks; resources view them." />
+      <PageHeader eyebrow="Operations" title="Tasks" />
       {active.length === 0 ? (
         <section className="card"><p>No project is active yet. Finalise a SOW, then activate it from resource allocation.</p></section>
       ) : selected ? (
@@ -85,7 +85,7 @@ export default async function DeliveryPage({ searchParams }: { searchParams: Pro
                     </tbody>
                   </table>
                 </div>
-                {editable ? <Submit>Save tasks</Submit> : <p className="muted">Read only. Only the project owner can create or edit tasks.</p>}
+                {editable ? <Submit>Save tasks</Submit> : <p className="muted">View only.</p>}
               </ActionForm>
               {editable ? (
                 <ActionForm action={addDeliveryTaskAction} className="form-grid">
@@ -128,7 +128,7 @@ export default async function DeliveryPage({ searchParams }: { searchParams: Pro
                   <h2>Generated handover pack</h2>
                   <PrintButton />
                 </div>
-                <p className="muted">Preview of the document and the tracking sheet.</p>
+                <p className="muted">Document preview.</p>
                 {sections.map(([title, body]) => (
                   <div key={title}>
                     <h3>{title}</h3>

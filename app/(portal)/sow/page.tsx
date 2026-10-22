@@ -21,9 +21,9 @@ export default async function SowPage({ searchParams }: { searchParams: Promise<
   return (
     <>
       {query.intake ? <ArrivalToast title="Project intake completed." body="It is now with SOW. The client, admin, director, and the intake owner have been notified." /> : null}
-      <PageHeader eyebrow="Delivery control" title="SOW management" lede="Every intaken project with its delivery status. Change status from the list and attach the SOW PDF in the same row." />
+      <PageHeader eyebrow="Operations" title="Statements of work" />
       <div className="stats">
-        <Stat label="Projects intaken" value={String(data.projects.length)} />
+        <Stat label="Projects" value={String(data.projects.length)} />
         <Stat label="In progress" value={String(counts.progress)} />
         <Stat label="Done" value={String(counts.done)} />
         <Stat label="Blocked" value={String(counts.blocked)} />
@@ -65,7 +65,7 @@ export default async function SowPage({ searchParams }: { searchParams: Promise<
                       </ActionForm>
                     ) : null}
                   </td>
-                  <td><Link href={`/sow/${project.id}`}>Open in admin</Link></td>
+                  <td><Link href={`/sow/${project.id}`}>Review</Link></td>
                 </tr>
               ))}
             </tbody>

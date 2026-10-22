@@ -15,11 +15,7 @@ export default async function ReportsPage() {
 
   return (
     <>
-      <PageHeader
-        eyebrow="Commercial"
-        title={financial ? "Profitability" : "Project progress"}
-        lede={financial ? "Recognized value is invoiced work plus approved billable time that has not been invoiced yet. Cost is logged hours times each person’s internal hourly cost. Completion and health come from the sprint plan." : "Hours, open work, and sprint completion for the projects you can see. Internal cost and profit stay with financial roles."}
-      />
+      <PageHeader eyebrow="Commercial" title={financial ? "Profitability" : "Project progress"} />
       <section className="card">
         <div className="table-wrap">
           <table>

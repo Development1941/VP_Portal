@@ -17,9 +17,9 @@ const TASK_STATES: Task["status"][] = ["backlog", "in_progress", "review", "done
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { user, data, allowed } = await requirePage(["projects.view", "projects.view_all"]);
-  if (!allowed) return <PageHeader eyebrow="Project" title="This project is outside your access." />;
+  if (!allowed) return <PageHeader eyebrow="Project" title="You do not have access to this project." />;
   const project = data.projects.find((item) => item.id === id);
-  if (!project) return <PageHeader eyebrow="Project" title="That project is not on your desk." />;
+  if (!project) return <PageHeader eyebrow="Project" title="Project not found." />;
   const manage = canManageProject(user, project);
   const seeSprints = canSeeMilestones(user, project, data.members);
   const uploadSprints = canUploadMilestones(user, project, data.members);
@@ -409,7 +409,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       </section>
       <section className="card">
         <h2>Daily record</h2>
-        <p className="muted">Approved and draft DSR for this project. Another project’s owner does not see these rows.</p>
+        <p className="muted">Approved and draft daily status reports for this project.</p>
         <div className="table-wrap">
           <table>
             <thead><tr><th>Date</th><th>Person</th><th>Hours</th><th>Record</th><th>Status</th></tr></thead>
@@ -430,12 +430,12 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       </section>
       <section className="card">
         <h2>Change record</h2>
-        <p className="muted">Notes stay on the project. Sprint, task, and membership changes are kept here too.</p>
+        <p className="muted">Notes and recorded changes for this project.</p>
         <ActionForm action={saveProjectNoteAction} className="form-grid">
           <input type="hidden" name="projectId" value={project.id} />
           <label className="field wide">
             <span>Add a record</span>
-            <textarea name="note" rows={3} required placeholder="What changed, who decided it, and the date it applies." />
+            <textarea name="note" rows={3} required placeholder="Change, decision, and effective date" />
           </label>
           <Submit>Save record</Submit>
         </ActionForm>

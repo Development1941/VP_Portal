@@ -3,19 +3,21 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Activity,
-  Bell,
   Building2,
-  ClipboardList,
-  Clock3,
-  CreditCard,
+  CalendarClock,
   FileText,
   FolderKanban,
+  Gauge,
+  HeartPulse,
+  History,
+  Inbox,
   LayoutDashboard,
-  ListChecks,
+  ListTodo,
   PieChart,
+  Receipt,
   ScrollText,
   Settings,
+  SquareKanban,
   TriangleAlert,
   Users,
   UsersRound,
@@ -26,22 +28,23 @@ import type { NavLink } from "@/lib/nav";
 
 const ICONS: Record<string, LucideIcon> = {
   dashboard: LayoutDashboard,
-  intake: ClipboardList,
-  sow: FileText,
+  work: SquareKanban,
+  intake: Inbox,
+  sow: ScrollText,
   resources: UsersRound,
   alert: TriangleAlert,
-  tasks: ListChecks,
-  time: Clock3,
+  tasks: ListTodo,
+  time: CalendarClock,
+  utilization: Gauge,
   projects: FolderKanban,
-  health: Activity,
+  health: HeartPulse,
   clients: Building2,
-  billing: CreditCard,
+  billing: Receipt,
   invoices: FileText,
   payments: Wallet,
   reports: PieChart,
   team: Users,
-  bell: Bell,
-  audit: ScrollText,
+  audit: History,
   settings: Settings,
 };
 
@@ -65,7 +68,9 @@ export function SideNav({ links, className }: { links: NavLink[]; className: str
                   aria-current={active ? "page" : undefined}
                   onClick={(event) => event.currentTarget.closest("details")?.removeAttribute("open")}
                 >
-                  <Icon />
+                  <span className="nav-ico">
+                    <Icon strokeWidth={1.75} aria-hidden />
+                  </span>
                   <span>{link.label}</span>
                 </Link>
               );

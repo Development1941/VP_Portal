@@ -271,6 +271,8 @@ export type StatusUpdate = {
   status: string;
   remarks: string;
   statusDate: string;
+  sheetLabel?: string;
+  fields?: Record<string, string>;
 };
 
 export type Workspace = {

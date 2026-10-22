@@ -15,15 +15,7 @@ export default async function WorkPage() {
 
   return (
     <>
-      <PageHeader
-        eyebrow="My work"
-        title={reviewing ? "Project board" : "My board"}
-        lede={
-          reviewing
-            ? "Drag a card into any list. A card moved to Done stays on this board."
-            : "Drag a card into Backlog, In progress, Review, or Done. Done cards go to the project owner and project manager."
-        }
-      />
+      <PageHeader eyebrow="Workspace" title={reviewing ? "Project board" : "My work"} />
       <WorkBoard
         tasks={tasks.map((task) => {
           const project = projectOf(data, task.projectId);
