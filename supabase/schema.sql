@@ -1044,6 +1044,119 @@ create policy status_updates_delete on public.status_updates for delete to authe
 
 grant select, insert, update, delete on public.status_updates to authenticated;
 
+create table if not exists public.sow_records (
+  id text primary key,
+  kind text not null default 'status' check (kind in ('status', 'bid')),
+  sheet_no int not null default 0,
+  project_name text not null default '',
+  sprint text not null default '',
+  link text not null default '',
+  signature text not null default '',
+  signed_on text not null default '',
+  change_request text not null default '',
+  company text not null default ''
+);
+
+alter table public.sow_records enable row level security;
+
+drop policy if exists sow_records_read on public.sow_records;
+create policy sow_records_read on public.sow_records for select to authenticated
+  using (public.status_row_visible(company));
+
+drop policy if exists sow_records_insert on public.sow_records;
+drop policy if exists sow_records_update on public.sow_records;
+drop policy if exists sow_records_delete on public.sow_records;
+create policy sow_records_insert on public.sow_records for insert to authenticated
+  with check (public.status_sheet_editor());
+create policy sow_records_update on public.sow_records for update to authenticated
+  using (public.status_sheet_editor())
+  with check (public.status_sheet_editor());
+create policy sow_records_delete on public.sow_records for delete to authenticated
+  using (public.status_sheet_editor());
+
+grant select, insert, update, delete on public.sow_records to authenticated;
+
+alter table public.profiles add column if not exists company_scope text not null default '';
+alter table public.profiles add column if not exists sheet_editor boolean not null default false;
+alter table public.clients add column if not exists created_at timestamptz not null default now();
+alter table public.features add column if not exists created_at timestamptz not null default now();
+alter table public.invoices add column if not exists created_at timestamptz not null default now();
+alter table public.milestones add column if not exists created_at timestamptz not null default now();
+alter table public.profiles add column if not exists created_at timestamptz not null default now();
+alter table public.projects add column if not exists created_at timestamptz not null default now();
+alter table public.rates add column if not exists created_at timestamptz not null default now();
+alter table public.roles add column if not exists created_at timestamptz not null default now();
+alter table public.tasks add column if not exists created_at timestamptz not null default now();
+alter table public.timesheets add column if not exists created_at timestamptz not null default now();
+
+update public.profiles
+set company_scope = 'assure'
+where company_scope = ''
+  and (
+    lower(email) in ('rakhee@embee.local', 'brian@embee.local')
+    or lower(btrim(full_name)) in ('rakhee', 'brian')
+  );
+
+update public.profiles
+set sheet_editor = true
+where lower(email) = 'owner@embee.local'
+   or lower(full_name) like '%gsvk%';
+
+create or replace function public.status_row_visible(row_company text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select case
+    when exists (
+      select 1
+      from public.profiles p
+      where p.id = auth.uid()
+        and (
+          lower(btrim(coalesce(p.company_scope, ''))) = 'assure'
+          or lower(p.email) in ('rakhee@embee.local', 'brian@embee.local')
+          or lower(btrim(p.full_name)) in ('rakhee', 'brian')
+        )
+    ) then lower(btrim(coalesce(row_company, ''))) = 'assure'
+    else true
+  end;
+$$;
+
+create or replace function public.status_sheet_editor()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.profiles p
+    where p.id = auth.uid()
+      and p.status = 'active'
+      and (
+        p.sheet_editor
+        or lower(p.email) = 'owner@embee.local'
+        or lower(p.full_name) like '%gsvk%'
+      )
+  );
+$$;
+
+insert into public.role_permissions (role_id, permission_key)
+select r.id, 'projects.intake'
+from public.roles r
+where r.slug = 'project_owner'
+on conflict do nothing;
+
+create index if not exists status_updates_date_idx on public.status_updates (status_date desc, sheet_no);
+create index if not exists sow_records_kind_idx on public.sow_records (kind, sheet_no);
+
+insert into storage.buckets (id, name, public)
+values ('project-docs', 'project-docs', false)
+on conflict (id) do nothing;
+
 with ranked as (
   select id, row_number() over (
     partition by user_id, work_date

@@ -22,6 +22,8 @@ export type SessionUser = {
   status: "active" | "invited" | "inactive";
   avatarUrl: string;
   about: string;
+  companyScope?: string;
+  sheetEditor?: boolean;
 };
 
 export type DirectoryUser = {
@@ -276,6 +278,19 @@ export type StatusUpdate = {
   fields?: Record<string, string>;
 };
 
+export type SowRecord = {
+  id: string;
+  kind: "status" | "bid";
+  sheetNo: number;
+  project: string;
+  sprint: string;
+  link: string;
+  signature: string;
+  signedOn: string;
+  changeRequest: string;
+  company: string;
+};
+
 export type Workspace = {
   currency: string;
   fxRates: FxRate[];
@@ -299,6 +314,7 @@ export type Workspace = {
   files: ProjectFile[];
   workstreams: Workstream[];
   statusUpdates: StatusUpdate[];
+  sowRecords: SowRecord[];
 };
 
 export type Result = { error?: string };

@@ -1,15 +1,17 @@
 import type { StatusUpdate } from "@/lib/types";
 
-export function canPublishStatus(user: { email: string; fullName: string }) {
+export function canPublishStatus(user: { email: string; fullName: string; sheetEditor?: boolean }) {
+  if (user.sheetEditor) return true;
   const email = user.email.toLowerCase();
   const name = user.fullName.toLowerCase();
   return email === "owner@embee.local" || name.includes("gsvk");
 }
 
-export function visibleStatus<T extends { company?: string }>(user: { email: string; fullName: string }, rows: T[]) {
+export function visibleStatus<T extends { company?: string }>(user: { email: string; fullName: string; companyScope?: string }, rows: T[]) {
   const email = user.email.toLowerCase();
   const name = user.fullName.toLowerCase().trim();
-  const assureOnly = email === "rakhee@embee.local" || email === "brian@embee.local" || name === "rakhee" || name === "brian";
+  const scope = (user.companyScope || "").trim().toLowerCase();
+  const assureOnly = scope === "assure" || email === "rakhee@embee.local" || email === "brian@embee.local" || name === "rakhee" || name === "brian";
   if (!assureOnly) return rows;
   return rows.filter((row) => (row.company || "").trim().toLowerCase() === "assure");
 }

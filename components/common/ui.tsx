@@ -50,6 +50,7 @@ const TONES: Record<string, string> = {
   planning: "warn",
   planned: "warn",
   pending: "warn",
+  addendum: "warn",
   watch: "warn",
   high: "warn",
   urgent: "bad",

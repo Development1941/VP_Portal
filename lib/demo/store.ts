@@ -21,6 +21,7 @@ import type {
   RateCard,
   Role,
   SessionUser,
+  SowRecord,
   Task,
   StatusUpdate,
   Timesheet,
@@ -29,6 +30,8 @@ import type {
 } from "@/lib/types";
 import { STATUS_UPDATES } from "@/lib/demo/status-board";
 import { canPublishStatus, presentStatus, visibleStatus } from "@/lib/status-board";
+import { DEFAULT_SOW } from "@/lib/demo/sow-board";
+import { presentSow } from "@/lib/sow-board";
 import { buildSeed, type DemoStore, type DemoUser } from "@/lib/demo/seed";
 
 const filePath = path.join(process.cwd(), ".data", "store.json");
@@ -93,6 +96,12 @@ function ensureStudioRoles(store: DemoStore) {
       user.roleSlug = "developer";
       user.roleName = "Developer";
     }
+  }
+  for (const user of store.users) {
+    const email = user.email.toLowerCase();
+    const name = user.fullName.toLowerCase().trim();
+    if (!user.companyScope && (email === "rakhee@embee.local" || email === "brian@embee.local" || name === "rakhee" || name === "brian")) user.companyScope = "assure";
+    if (email === "owner@embee.local" || name.includes("gsvk")) user.sheetEditor = true;
   }
   const sai = store.users.find((user) => user.email.toLowerCase() === "owner@embee.local" || user.fullName.toLowerCase().includes("gsvk"));
   if (sai && admin) {
@@ -246,6 +255,8 @@ export function toSession(store: DemoStore, user: DemoUser): SessionUser {
     status: user.status,
     avatarUrl: user.avatarUrl ?? "",
     about: user.about ?? "",
+    companyScope: user.companyScope ?? "",
+    sheetEditor: Boolean(user.sheetEditor),
   };
 }
 
@@ -339,6 +350,7 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
     workstreams: store.workstreams ?? [],
     fxRates: store.fxRates ?? [],
     statusUpdates: visibleStatus(user, (store.statusSheetReady ? store.statusUpdates ?? [] : STATUS_UPDATES).map(presentStatus)),
+    sowRecords: visibleStatus(user, (store.sowSheetReady ? store.sowRecords ?? [] : DEFAULT_SOW).map(presentSow)),
   };
 }
 
@@ -1153,6 +1165,33 @@ export function saveStatusSheet(user: SessionUser, rows: StatusUpdate[]) {
     store.statusSheetReady = true;
     audit(store, user, "status.upload", "status_sheet", "status", `Replaced the status history with ${rows.length} ${rows.length === 1 ? "row" : "rows"}.`);
     return rows.length;
+  });
+}
+
+export function saveSowSheet(user: SessionUser, rows: SowRecord[]) {
+  if (!canPublishStatus(user)) throw new PortalError("Only the admin can update the SOW status.");
+  return mutate((store) => {
+    const incoming = rows.map(presentSow);
+    const kinds = new Set(incoming.map((row) => row.kind));
+    const kept = (store.sowSheetReady ? store.sowRecords ?? DEFAULT_SOW : DEFAULT_SOW).filter((row) => !kinds.has(row.kind));
+    store.sowRecords = [...kept, ...incoming].sort((a, b) => a.kind.localeCompare(b.kind) || a.sheetNo - b.sheetNo);
+    store.sowSheetReady = true;
+    audit(store, user, "sow.upload", "sow", "status", `Updated ${incoming.length} SOW ${incoming.length === 1 ? "row" : "rows"}.`);
+    return incoming.length;
+  });
+}
+
+export function saveSowRecord(user: SessionUser, input: SowRecord) {
+  if (!canPublishStatus(user)) throw new PortalError("Only the admin can update the SOW status.");
+  return mutate((store) => {
+    const current = (store.sowSheetReady ? store.sowRecords ?? DEFAULT_SOW : DEFAULT_SOW).map(presentSow);
+    const next = presentSow(input);
+    const index = current.findIndex((row) => row.id === next.id);
+    if (index < 0) throw new PortalError("That SOW row was not found.");
+    current[index] = { ...current[index], ...next, id: current[index].id, kind: current[index].kind, sheetNo: current[index].sheetNo, project: current[index].project, company: current[index].company };
+    store.sowRecords = current;
+    store.sowSheetReady = true;
+    audit(store, user, "sow.edit", "sow", next.id, `Updated the SOW for ${current[index].project}.`);
   });
 }
 

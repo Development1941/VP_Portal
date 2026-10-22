@@ -2,7 +2,7 @@ import { defaultWorkstreams } from "@/lib/delivery";
 import { ROLE_PRESETS } from "@/lib/permissions";
 import type { Role, Workspace } from "@/lib/types";
 
-export type DemoUser = Workspace["users"][number] & { password: string; avatarUrl?: string; about?: string };
+export type DemoUser = Workspace["users"][number] & { password: string; avatarUrl?: string; about?: string; companyScope?: string; sheetEditor?: boolean };
 
 export type DemoStore = Omit<Workspace, "users"> & {
   users: DemoUser[];
@@ -10,6 +10,7 @@ export type DemoStore = Omit<Workspace, "users"> & {
   rosterApplied?: boolean;
   costsCleared?: boolean;
   statusSheetReady?: boolean;
+  sowSheetReady?: boolean;
 };
 
 export function buildSeed(): DemoStore {
@@ -110,7 +111,8 @@ export function buildSeed(): DemoStore {
       roleName: "Admin",
       roleSlug: "admin",
       status: "active",
-      hourlyCost: 1800,
+      hourlyCost: 0,
+      sheetEditor: true,
     },
     {
       id: "usr_ishaan",
@@ -123,7 +125,7 @@ export function buildSeed(): DemoStore {
       roleName: "Developer",
       roleSlug: "developer",
       status: "active",
-      hourlyCost: 900,
+      hourlyCost: 0,
     },
     {
       id: "usr_manav",
@@ -163,6 +165,7 @@ export function buildSeed(): DemoStore {
       roleSlug: "client",
       status: "active",
       hourlyCost: 0,
+      companyScope: "assure",
     },
     {
       id: "usr_brian",
@@ -176,6 +179,7 @@ export function buildSeed(): DemoStore {
       roleSlug: "client",
       status: "active",
       hourlyCost: 0,
+      companyScope: "assure",
     },
   ];
 
@@ -206,6 +210,7 @@ export function buildSeed(): DemoStore {
     ],
     fxRates: [],
     statusUpdates: [],
+    sowRecords: [],
     currency: "INR",
   };
 }

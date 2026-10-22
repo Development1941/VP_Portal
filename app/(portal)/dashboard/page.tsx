@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ActionForm, Submit } from "@/components/common/forms";
 import { Badge, PageHeader, Stat } from "@/components/common/ui";
-import { uploadStatusSheetAction } from "@/app/actions";
+import { saveSowRecordAction, uploadSowSheetAction, uploadStatusSheetAction } from "@/app/actions";
 import { ProjectHealthList } from "@/components/projects/health-list";
 import { can } from "@/lib/access";
 import { addDays, startOfWeek, todayIso } from "@/lib/dates";
@@ -10,6 +10,8 @@ import { nameOf, projectOf, requirePage } from "@/lib/page";
 import { dues, isOverdue, projectEconomics } from "@/lib/reports";
 import { showCommercials } from "@/lib/commercial";
 import { canPublishStatus, extraStatusColumns, groupStatus, latestStatus, statusTone } from "@/lib/status-board";
+import { sowAttentionNote, sowNeedsAttention } from "@/lib/sow-board";
+import type { SowRecord } from "@/lib/types";
 
 export default async function DashboardPage() {
   const { user, data } = await requirePage(["dashboard.view"]);
@@ -32,6 +34,9 @@ export default async function DashboardPage() {
   const groups = groupStatus(board.rows);
   const extras = extraStatusColumns(board.rows);
   const publishStatus = canPublishStatus(user);
+  const sowStatus = data.sowRecords.filter((row) => row.kind === "status");
+  const sowBids = data.sowRecords.filter((row) => row.kind === "bid");
+  const sowAttention = data.sowRecords.filter(sowNeedsAttention);
 
   return (
     <>
@@ -119,6 +124,98 @@ export default async function DashboardPage() {
           <p className="empty">No project status has been recorded.</p>
         )}
       </section>
+      <section className="card status-board" id="sow-status">
+        <div className="card-head">
+          <div>
+            <h2>SOW status</h2>
+            <span className="muted">Signed statements of work, open bids, and addenda</span>
+          </div>
+          {publishStatus ? (
+            <ActionForm action={uploadSowSheetAction} className="status-upload">
+              <label className="file-field">
+                Excel or CSV
+                <input type="file" name="sow" accept=".csv,.xlsx,.xls" required />
+              </label>
+              <Submit>Upload SOW</Submit>
+            </ActionForm>
+          ) : null}
+        </div>
+        {sowStatus.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>S.no</th>
+                  <th>Project</th>
+                  <th>Sprint</th>
+                  <th>Link</th>
+                  <th>Signed</th>
+                  <th>Signed on</th>
+                  <th>CR / Addendum</th>
+                  <th>Company</th>
+                  {publishStatus ? <th>Edit</th> : null}
+                </tr>
+              </thead>
+              <tbody>
+                {sowStatus.map((row) => (
+                  <tr key={row.id}>
+                    <td className="num">{row.sheetNo || "—"}</td>
+                    <td>{row.project}</td>
+                    <td>{row.sprint || "—"}</td>
+                    <td>{sowLink(row.link)}</td>
+                    <td>{row.signature ? <span className={`badge ${row.signature.toLowerCase() === "signed" ? "ok" : "warn"}`}>{row.signature}</span> : "—"}</td>
+                    <td className="num">{row.signedOn || "—"}</td>
+                    <td className="remarks">{row.changeRequest || "—"}</td>
+                    <td>{row.company || "—"}</td>
+                    {publishStatus ? (
+                      <td>
+                        <SowEdit row={row} />
+                      </td>
+                    ) : null}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="empty">No SOW status has been recorded.</p>
+        )}
+        {sowBids.length ? (
+          <>
+            <div className="card-head sow-bids-head">
+              <h3>SOW bids</h3>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>S.no</th>
+                    <th>Project</th>
+                    <th>Reference link</th>
+                    <th>Company</th>
+                    {publishStatus ? <th>Edit</th> : null}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sowBids.map((row) => (
+                    <tr key={row.id}>
+                      <td className="num">{row.sheetNo || "—"}</td>
+                      <td>{row.project}</td>
+                      <td>{sowLink(row.link)}</td>
+                      <td>{row.company || "—"}</td>
+                      {publishStatus ? (
+                        <td>
+                          <SowEdit row={row} />
+                        </td>
+                      ) : null}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : null}
+      </section>
       {user.roleSlug === "director" ? (
         <section className="card">
           <div className="card-head">
@@ -134,6 +231,15 @@ export default async function DashboardPage() {
             <h2>Needs attention</h2>
           </div>
           <div className="list">
+            {sowAttention.map((row) => (
+              <Link key={row.id} href="#sow-status">
+                <span>
+                  {row.project}
+                  {row.company ? ` · ${row.company}` : ""} · {sowAttentionNote(row)}
+                </span>
+                <Badge value={row.changeRequest.trim() ? "addendum" : "pending"} />
+              </Link>
+            ))}
             {returned ? (
               <Link href="/timesheets">
                 <span>Returned timesheets</span>
@@ -166,7 +272,7 @@ export default async function DashboardPage() {
                 <Badge value={item.status} />
               </Link>
             ))}
-            {!returned && !approvals.length && !(showCommercials && openDues.length) && !milestones.length ? <p className="empty">No items require attention.</p> : null}
+            {!sowAttention.length && !returned && !approvals.length && !(showCommercials && openDues.length) && !milestones.length ? <p className="empty">No items require attention.</p> : null}
           </div>
         </section>
         <section className="card">
@@ -189,5 +295,56 @@ export default async function DashboardPage() {
         </section>
       </div>
     </>
+  );
+}
+
+function sowLink(value: string) {
+  if (!value) return "—";
+  if (/^https?:\/\//i.test(value)) {
+    return (
+      <a href={value} target="_blank" rel="noreferrer">
+        {value}
+      </a>
+    );
+  }
+  return value;
+}
+
+function SowEdit({ row }: { row: SowRecord }) {
+  return (
+    <details className="sow-edit">
+      <summary>Edit</summary>
+      <ActionForm action={saveSowRecordAction} className="sow-edit-form">
+        <input type="hidden" name="id" value={row.id} />
+        <input type="hidden" name="sheetNo" value={row.sheetNo} />
+        <input type="hidden" name="project" value={row.project} />
+        <input type="hidden" name="company" value={row.company} />
+        <label className="field">
+          <span>Sprint</span>
+          <input name="sprint" defaultValue={row.sprint} />
+        </label>
+        <label className="field">
+          <span>Link</span>
+          <input name="link" defaultValue={row.link} />
+        </label>
+        <label className="field">
+          <span>Signed</span>
+          <select name="signature" defaultValue={row.signature}>
+            <option value="">Not set</option>
+            <option>Signed</option>
+            <option>Unsigned</option>
+          </select>
+        </label>
+        <label className="field">
+          <span>Signed on</span>
+          <input name="signedOn" defaultValue={row.signedOn} />
+        </label>
+        <label className="field">
+          <span>CR / Addendum</span>
+          <textarea name="changeRequest" rows={3} defaultValue={row.changeRequest} />
+        </label>
+        <Submit>Save row</Submit>
+      </ActionForm>
+    </details>
   );
 }

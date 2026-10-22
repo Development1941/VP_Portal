@@ -10,6 +10,8 @@ import { prettyDate } from "@/lib/format";
 import { asPermissions, list, num, str, type FormState, PortalError } from "@/lib/form";
 import { getSession, signIn, signOut } from "@/lib/session";
 import { parseStatusSheet } from "@/lib/status-sheet";
+import { parseSowSheet } from "@/lib/sow-sheet";
+import type { SowRecord } from "@/lib/types";
 import type { Client, Escalation, Feature, Milestone, Payment, Project, RateCard, Role, Task, Timesheet, Workstream } from "@/lib/types";
 
 function choice<T extends string>(form: FormData, key: string, options: readonly T[], fallback: T): T {
@@ -608,6 +610,37 @@ export async function uploadStatusSheetAction(_prev: FormState, form: FormData):
     const count = await db().saveStatusSheet(user, rows);
     return `Replaced the status history with ${count} ${count === 1 ? "row" : "rows"}.`;
   });
+}
+
+export async function uploadSowSheetAction(_prev: FormState, form: FormData): Promise<FormState> {
+  return run(async () => {
+    const user = await actor();
+    const file = filesOf(form, "sow")[0];
+    if (!file) throw new PortalError("Choose an Excel or CSV file.");
+    if (file.size > 4 * 1024 * 1024) throw new PortalError("That file is larger than 4 MB.");
+    const rows = parseSowSheet(Buffer.from(await file.arrayBuffer()), file.name);
+    const count = await db().saveSowSheet(user, rows);
+    return `Updated ${count} SOW ${count === 1 ? "row" : "rows"}.`;
+  });
+}
+
+export async function saveSowRecordAction(_prev: FormState, form: FormData): Promise<FormState> {
+  return run(async () => {
+    const user = await actor();
+    const input: SowRecord = {
+      id: str(form, "id"),
+      kind: "status",
+      sheetNo: num(form, "sheetNo"),
+      project: str(form, "project"),
+      sprint: str(form, "sprint"),
+      link: str(form, "link"),
+      signature: str(form, "signature"),
+      signedOn: str(form, "signedOn"),
+      changeRequest: str(form, "changeRequest"),
+      company: str(form, "company"),
+    };
+    await db().saveSowRecord(user, input);
+  }, "SOW row saved.");
 }
 
 export async function addDeliveryTaskAction(_prev: FormState, form: FormData) {

@@ -7,6 +7,7 @@ import { assertIntake, billingModelFor, clientForProfile, isIntakeOwner, keepDel
 import { packHours, unpackHours } from "@/lib/health";
 import { PortalError } from "@/lib/form";
 import { canPublishStatus, presentStatus, visibleStatus } from "@/lib/status-board";
+import { presentSow } from "@/lib/sow-board";
 import { ALL_PERMISSIONS, type PermissionKey } from "@/lib/permissions";
 import { nextInvoiceStatus, resolveBillRate } from "@/lib/metrics";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
@@ -24,6 +25,7 @@ import type {
   RateCard,
   Role,
   SessionUser,
+  SowRecord,
   StatusUpdate,
   Task,
   Timesheet,
@@ -483,6 +485,7 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
     workstreams: rows(workstreamRes).map(mapWorkstream),
     fxRates: await fxHistory(),
     statusUpdates: visibleStatus(user, await statusBoard()),
+    sowRecords: visibleStatus(user, await sowBoard()),
   };
 }
 
@@ -525,6 +528,24 @@ async function statusBoard() {
       fields: statusFields(row.fields),
     }),
   );
+}
+
+async function sowBoard() {
+  const supabase = await client();
+  const { data, error } = await supabase.from("sow_records").select("id, kind, sheet_no, project_name, sprint, link, signature, signed_on, change_request, company").order("sheet_no");
+  if (error || !data) return [];
+  return (data as Record<string, unknown>[]).map((row) => presentSow({
+    id: text(row.id),
+    kind: text(row.kind) === "bid" ? "bid" : "status",
+    sheetNo: num(row.sheet_no),
+    project: text(row.project_name),
+    sprint: text(row.sprint),
+    link: text(row.link),
+    signature: text(row.signature),
+    signedOn: text(row.signed_on),
+    changeRequest: text(row.change_request),
+    company: text(row.company),
+  }));
 }
 
 async function fxHistory() {
@@ -1653,6 +1674,54 @@ export async function saveStatusSheet(user: SessionUser, rows: StatusUpdate[]) {
   }
   await trail(user, "status.upload", "status_sheet", "status", `Replaced the status history with ${rows.length} ${rows.length === 1 ? "row" : "rows"}.`);
   return rows.length;
+}
+
+function sowPayload(row: SowRecord) {
+  const item = presentSow(row);
+  return {
+    id: item.id,
+    kind: item.kind,
+    sheet_no: item.sheetNo,
+    project_name: item.project,
+    sprint: item.sprint,
+    link: item.link,
+    signature: item.signature,
+    signed_on: item.signedOn,
+    change_request: item.changeRequest,
+    company: item.company,
+  };
+}
+
+export async function saveSowSheet(user: SessionUser, rows: SowRecord[]) {
+  if (!canPublishStatus(user)) throw new PortalError("Only the admin can update the SOW status.");
+  const supabase = await client();
+  const incoming = rows.map(presentSow);
+  const kinds = [...new Set(incoming.map((row) => row.kind))];
+  if (kinds.length) {
+    const { error } = await supabase.from("sow_records").delete().in("kind", kinds);
+    raise(error);
+  }
+  for (let index = 0; index < incoming.length; index += 400) {
+    const { error } = await supabase.from("sow_records").insert(incoming.slice(index, index + 400).map(sowPayload));
+    raise(error);
+  }
+  await trail(user, "sow.upload", "sow", "status", `Updated ${incoming.length} SOW ${incoming.length === 1 ? "row" : "rows"}.`);
+  return incoming.length;
+}
+
+export async function saveSowRecord(user: SessionUser, input: SowRecord) {
+  if (!canPublishStatus(user)) throw new PortalError("Only the admin can update the SOW status.");
+  const supabase = await client();
+  const item = presentSow(input);
+  const { error } = await supabase.from("sow_records").update({
+    sprint: item.sprint,
+    link: item.link,
+    signature: item.signature,
+    signed_on: item.signedOn,
+    change_request: item.changeRequest,
+  }).eq("id", item.id);
+  raise(error);
+  await trail(user, "sow.edit", "sow", item.id, `Updated the SOW for ${item.project}.`);
 }
 
 export async function saveWorkstream(user: SessionUser, input: { id: string; ownerName: string; targetDate: string; status: Workstream["status"] }) {
