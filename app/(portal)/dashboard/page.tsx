@@ -285,7 +285,6 @@ export default async function DashboardPage() {
                     <th>S.no</th>
                     <th>Project</th>
                     <th>Reference link</th>
-                    <th>Company</th>
                     {publishStatus ? <th>Edit</th> : null}
                   </tr>
                 </thead>
@@ -298,7 +297,6 @@ export default async function DashboardPage() {
                         <td className="num">{row.sheetNo || "—"}</td>
                         <td>{row.project}</td>
                         <td>{sowLink(row.link)}</td>
-                        <td>{row.company || "—"}</td>
                       </tr>
                     ),
                   )}
@@ -327,9 +325,9 @@ export default async function DashboardPage() {
             </div>
             <SheetUpload
               action={uploadHourlyTrackerAction}
-              button="Upload my role"
+              button="Upload CSV"
               title="Upload hourly tracker"
-              hint="Use the resource utilization sheet. Project, Sprint, Resource, Task, Date, Hours Spent, Status, and Company are read from the file. An October plan sheet also reads the estimate and actual columns."
+              hint="Use the daily utilization CSV. It reads S.no, Project, Sprint, Resource, Task, Date, Hours Spent, Status, and Company."
               field="sheet"
             />
           </div>

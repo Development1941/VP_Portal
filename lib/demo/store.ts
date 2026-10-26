@@ -958,12 +958,27 @@ function hourlyPayload(user: SessionUser, row: HourlySheetRow, id = ""): HourlyE
   };
 }
 
+export function saveAllocationSheet(user: SessionUser, rows: HourlySheetRow[]) {
+  if (!canUseHourlyTracker(user)) throw new PortalError("You cannot upload resource allocation.");
+  const plan = hourlyRowsForUser(rows, user).filter(isResourceAllocation);
+  if (!plan.length) throw new PortalError("That file has no resource allocation rows. Use the plan sheet with Estimated Hours.");
+  const incoming = plan.map((row) => hourlyPayload(user, { ...row, hours: Math.min(24, Math.max(0, row.hours)) }));
+  return mutate((store) => {
+    store.hourlyEntries = (store.hourlyEntries ?? []).filter((entry) => !isResourceAllocation(entry));
+    store.hourlyEntries.push(...incoming);
+    audit(store, user, "allocation.upload", "hourly", user.id, `Uploaded ${incoming.length} resource allocation ${incoming.length === 1 ? "row" : "rows"}.`);
+    return incoming.length;
+  });
+}
+
 export function saveHourlySheet(user: SessionUser, rows: HourlySheetRow[]) {
   if (!canUseHourlyTracker(user)) throw new PortalError("You cannot upload an hourly tracker.");
-  const incoming = hourlyRowsForUser(rows, user).map((row) => hourlyPayload(user, row));
+  const logs = hourlyRowsForUser(rows, user).filter((row) => !isResourceAllocation(row));
+  if (!logs.length) throw new PortalError("That file has no hourly rows. Use the sheet with Date and Hours Spent.");
+  const incoming = logs.map((row) => hourlyPayload(user, row));
   return mutate((store) => {
-    store.hourlyEntries = (store.hourlyEntries ?? []).filter((entry) => entry.userId !== user.id);
-    store.hourlyEntries.unshift(...incoming);
+    store.hourlyEntries = (store.hourlyEntries ?? []).filter((entry) => isResourceAllocation(entry) || entry.userId !== user.id);
+    store.hourlyEntries.push(...incoming);
     audit(store, user, "hourly.upload", "hourly", user.id, `Uploaded ${incoming.length} hourly ${incoming.length === 1 ? "row" : "rows"} for ${user.roleName}.`);
     return incoming.length;
   });

@@ -1913,11 +1913,32 @@ function hourlyRecord(user: SessionUser, row: HourlySheetRow) {
   };
 }
 
+export async function saveAllocationSheet(user: SessionUser, rows: HourlySheetRow[]) {
+  if (!canUseHourlyTracker(user)) throw new PortalError("You cannot upload resource allocation.");
+  const plan = hourlyRowsForUser(rows, user).filter(isResourceAllocation);
+  if (!plan.length) throw new PortalError("That file has no resource allocation rows. Use the plan sheet with Estimated Hours.");
+  const incoming = plan.map((row) => hourlyRecord(user, { ...row, hours: Math.min(24, Math.max(0, row.hours)) }));
+  const supabase = await client();
+  const replaced = await supabase.rpc("replace_resource_allocation", { payload: incoming });
+  if (!replaced.error) {
+    await trail(user, "allocation.upload", "hourly", user.id, `Uploaded ${incoming.length} resource allocation ${incoming.length === 1 ? "row" : "rows"}.`);
+    return Number(replaced.data ?? incoming.length);
+  }
+  const { error: clearError } = await supabase.from("hourly_entries").delete().eq("user_id", user.id).or("estimated_hours.not.is.null,target_hours.not.is.null,est_start.not.is.null");
+  raise(clearError);
+  const { error } = await supabase.from("hourly_entries").insert(incoming);
+  raise(error);
+  await trail(user, "allocation.upload", "hourly", user.id, `Uploaded ${incoming.length} resource allocation ${incoming.length === 1 ? "row" : "rows"}.`);
+  return incoming.length;
+}
+
 export async function saveHourlySheet(user: SessionUser, rows: HourlySheetRow[]) {
   if (!canUseHourlyTracker(user)) throw new PortalError("You cannot upload an hourly tracker.");
-  const incoming = hourlyRowsForUser(rows, user).map((row) => hourlyRecord(user, row));
+  const logs = hourlyRowsForUser(rows, user).filter((row) => !isResourceAllocation(row));
+  if (!logs.length) throw new PortalError("That file has no hourly rows. Use the sheet with Date and Hours Spent.");
+  const incoming = logs.map((row) => hourlyRecord(user, row));
   const supabase = await client();
-  const { error: clearError } = await supabase.from("hourly_entries").delete().eq("user_id", user.id);
+  const { error: clearError } = await supabase.from("hourly_entries").delete().eq("user_id", user.id).is("estimated_hours", null).is("target_hours", null).is("est_start", null);
   raise(clearError);
   if (incoming.length) {
     const { error } = await supabase.from("hourly_entries").insert(incoming);

@@ -603,6 +603,18 @@ export async function saveDeliverySheetAction(_prev: FormState, form: FormData) 
   }, "Task sheet saved.");
 }
 
+export async function uploadAllocationAction(_prev: FormState, form: FormData): Promise<FormState> {
+  return run(async () => {
+    const user = await actor();
+    const file = filesOf(form, "sheet")[0];
+    if (!file) throw new PortalError("Choose a CSV or Excel file.");
+    if (file.size > 4 * 1024 * 1024) throw new PortalError("That file is larger than 4 MB.");
+    const rows = parseHourlySheet(Buffer.from(await file.arrayBuffer()), file.name);
+    const count = await db().saveAllocationSheet(user, rows);
+    return `Saved ${count} allocation ${count === 1 ? "row" : "rows"}.`;
+  });
+}
+
 export async function uploadHourlyTrackerAction(_prev: FormState, form: FormData): Promise<FormState> {
   return run(async () => {
     const user = await actor();

@@ -265,6 +265,7 @@ a.stat { text-decoration: none; color: inherit; }
 .plist a { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); text-decoration: none; color: inherit; }
 .plist a.on { border-color: var(--clay); box-shadow: inset 3px 0 0 var(--clay); }
 .task-head, .card-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.card-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .inline-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .inline-form input, .inline-form select { width: auto; min-width: 140px; }
 .sheet-table input, .sheet-table select { min-width: 0; padding: 6px 8px; }
@@ -339,8 +340,8 @@ a.stat { text-decoration: none; color: inherit; }
 .upload-foot .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .sow-bids-head { margin-top: 18px; }
 .sow-bids-head h3 { margin: 0; font-size: 16px; }
-.hour-projects { display: grid; gap: 8px; }
-.hour-project { border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
+.hour-projects { display: grid; gap: 8px; min-width: 0; max-width: 100%; }
+.hour-project { border: 1px solid var(--line); border-radius: 12px; background: var(--paper); min-width: 0; max-width: 100%; }
 .hour-project summary {
   cursor: pointer; list-style: none;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -354,7 +355,18 @@ a.stat { text-decoration: none; color: inherit; }
   transform: rotate(-45deg); margin-top: -2px;
 }
 .hour-project[open] .hour-project-name::before { transform: rotate(45deg); margin-top: 2px; }
-.hour-project .table-wrap { padding: 0 12px 12px; }
+.hour-project .table-wrap { padding: 0 12px 12px; min-width: 0; max-width: 100%; }
+#resource-allocation { content-visibility: visible; contain-intrinsic-size: none; }
+#resource-allocation .table-wrap {
+  overflow-x: scroll;
+  overflow-y: hidden;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--muted) var(--paper-2);
+}
+#resource-allocation .table-wrap::-webkit-scrollbar { height: 12px; }
+#resource-allocation .table-wrap::-webkit-scrollbar-track { background: var(--paper-2); border-radius: 999px; }
+#resource-allocation .table-wrap::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 999px; }
 .status-board a:not(.edit-ico) { white-space: nowrap; }
 .edit-row { cursor: pointer; }
 .edit-row:hover td { background: var(--paper-2); }

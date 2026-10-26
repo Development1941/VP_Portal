@@ -14,10 +14,7 @@ export function SowEditRow({ row }: { row: SowRecord }) {
       <td className="num">{row.sheetNo || "—"}</td>
       <td>{row.project}</td>
       {row.kind === "bid" ? (
-        <>
-          <td>{sowLink(row.link)}</td>
-          <td>{row.company || "—"}</td>
-        </>
+        <td>{sowLink(row.link)}</td>
       ) : (
         <>
           <td>{row.sprint || "—"}</td>

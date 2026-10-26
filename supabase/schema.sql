@@ -1330,4 +1330,75 @@ $$;
 
 grant execute on function public.portal_bundle(boolean, boolean, boolean, boolean, boolean, boolean) to authenticated;
 
+create or replace function public.replace_resource_allocation(payload jsonb)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  inserted integer := 0;
+begin
+  if auth.uid() is null
+     or not (public.has_permission('timesheets.view_all') or public.has_permission('settings.manage')) then
+    raise exception 'You cannot upload resource allocation.';
+  end if;
+  delete from public.hourly_entries
+  where estimated_hours is not null
+     or target_hours is not null
+     or est_start is not null;
+  insert into public.hourly_entries (
+    user_id, role_name, sheet_no, project_name, sprint, resource_name, task,
+    work_date, hours, status, company, est_start, est_end, estimated_hours,
+    target_hours, actual_start, actual_end, actual_hours, approval, notes
+  )
+  select
+    auth.uid(),
+    coalesce(r.role_name, ''),
+    coalesce(r.sheet_no, 0),
+    coalesce(r.project_name, ''),
+    coalesce(r.sprint, ''),
+    coalesce(r.resource_name, ''),
+    coalesce(r.task, ''),
+    nullif(r.work_date, '')::date,
+    least(24, greatest(0, coalesce(r.hours, 0))),
+    coalesce(r.status, ''),
+    coalesce(r.company, ''),
+    nullif(r.est_start, '')::date,
+    nullif(r.est_end, '')::date,
+    r.estimated_hours,
+    r.target_hours,
+    nullif(r.actual_start, '')::date,
+    nullif(r.actual_end, '')::date,
+    r.actual_hours,
+    coalesce(r.approval, ''),
+    coalesce(r.notes, '')
+  from jsonb_to_recordset(coalesce(payload, '[]'::jsonb)) as r(
+    role_name text,
+    sheet_no integer,
+    project_name text,
+    sprint text,
+    resource_name text,
+    task text,
+    work_date text,
+    hours numeric,
+    status text,
+    company text,
+    est_start text,
+    est_end text,
+    estimated_hours numeric,
+    target_hours numeric,
+    actual_start text,
+    actual_end text,
+    actual_hours numeric,
+    approval text,
+    notes text
+  );
+  get diagnostics inserted = row_count;
+  return inserted;
+end;
+$$;
+
+grant execute on function public.replace_resource_allocation(jsonb) to authenticated;
+
 notify pgrst, 'reload schema';

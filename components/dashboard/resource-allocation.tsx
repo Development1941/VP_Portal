@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { uploadAllocationAction } from "@/app/actions";
+import { SheetUpload } from "@/components/dashboard/sheet-upload";
 import { HourlyEditRow } from "@/components/dashboard/row-edit";
 import { hoursLabel, prettyDate } from "@/lib/format";
 import { isResourceAllocation } from "@/lib/hourly-sheet";
@@ -18,7 +20,18 @@ export function ResourceAllocation({ rows, editable, linked }: { rows: HourlyEnt
             {people.length ? `${people.length} people · ${hoursLabel(estimated)} estimated · ${hoursLabel(target)} target` : "Estimated hours and targets from the utilization plan"}
           </span>
         </div>
-        {linked ? <Link href="/resources">Full list</Link> : null}
+        <div className="card-tools">
+          {editable ? (
+            <SheetUpload
+              action={uploadAllocationAction}
+              button="Upload CSV"
+              title="Upload resource allocation"
+              hint="Use the utilization plan CSV. It reads S.no, Project, Sprint, Resource, Task, EST Start Date, EST End Date, Estimated Hours, Target hours embee, Actual Start Date, Actual End Date, Actual Hours, Status, and Approval."
+              field="sheet"
+            />
+          ) : null}
+          {linked ? <Link href="/resources">Full list</Link> : null}
+        </div>
       </div>
       {people.length ? (
         <div className="hour-projects">
