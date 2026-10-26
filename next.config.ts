@@ -1,5 +1,5 @@
 import type { NextConfig } from "next";
-
+ 
 type CacheCompiler = {
   hooks: {
     infrastructureLog: {
