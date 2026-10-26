@@ -211,6 +211,7 @@ export function buildSeed(): DemoStore {
     fxRates: [],
     statusUpdates: [],
     sowRecords: [],
+    hourlyEntries: [],
     currency: "INR",
   };
 }

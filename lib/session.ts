@@ -37,7 +37,7 @@ async function supabaseSession(): Promise<SessionUser | null> {
   if (!data.user) return null;
   const { data: profile } = await supabase
     .from("profiles")
-    .select("id, full_name, email, title, phone, role_id, status, company_scope, sheet_editor, roles(name, slug, locked)")
+    .select("id, full_name, email, title, phone, about, role_id, status, company_scope, sheet_editor, roles(name, slug, locked)")
     .eq("id", data.user.id)
     .maybeSingle();
   if (!profile) return null;
@@ -60,7 +60,7 @@ async function supabaseSession(): Promise<SessionUser | null> {
     permissions,
     status: profile.status,
     avatarUrl: textMeta(data.user.user_metadata?.avatar_url),
-    about: textMeta(data.user.user_metadata?.about),
+    about: textMeta(profile.about) || textMeta(data.user.user_metadata?.about),
     companyScope: profile.company_scope ?? "",
     sheetEditor: Boolean(profile.sheet_editor),
   };

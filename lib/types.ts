@@ -278,6 +278,16 @@ export type StatusUpdate = {
   fields?: Record<string, string>;
 };
 
+export type HourlyEntry = {
+  id: string;
+  userId: string;
+  roleName: string;
+  workDate: string;
+  project: string;
+  hours: number;
+  notes: string;
+};
+
 export type SowRecord = {
   id: string;
   kind: "status" | "bid";
@@ -315,6 +325,7 @@ export type Workspace = {
   workstreams: Workstream[];
   statusUpdates: StatusUpdate[];
   sowRecords: SowRecord[];
+  hourlyEntries: HourlyEntry[];
 };
 
 export type Result = { error?: string };

@@ -1157,6 +1157,81 @@ insert into storage.buckets (id, name, public)
 values ('project-docs', 'project-docs', false)
 on conflict (id) do nothing;
 
+alter table public.profiles add column if not exists about text not null default '';
+
+create table if not exists public.hourly_entries (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  role_name text not null default '',
+  work_date date not null,
+  project_name text not null default '',
+  hours numeric not null,
+  notes text not null default ''
+);
+
+alter table public.hourly_entries enable row level security;
+
+drop policy if exists hourly_entries_read on public.hourly_entries;
+create policy hourly_entries_read on public.hourly_entries for select to authenticated
+  using (user_id = auth.uid() or public.has_permission('timesheets.view_all') or public.has_permission('timesheets.approve'));
+
+drop policy if exists hourly_entries_insert on public.hourly_entries;
+create policy hourly_entries_insert on public.hourly_entries for insert to authenticated
+  with check (user_id = auth.uid() and public.has_permission('timesheets.submit'));
+
+drop policy if exists hourly_entries_update on public.hourly_entries;
+create policy hourly_entries_update on public.hourly_entries for update to authenticated
+  using (user_id = auth.uid() and public.has_permission('timesheets.submit'))
+  with check (user_id = auth.uid() and public.has_permission('timesheets.submit'));
+
+drop policy if exists hourly_entries_delete on public.hourly_entries;
+create policy hourly_entries_delete on public.hourly_entries for delete to authenticated
+  using (user_id = auth.uid() and public.has_permission('timesheets.submit'));
+
+grant select, insert, update, delete on public.hourly_entries to authenticated;
+
+insert into public.role_permissions (role_id, permission_key)
+select r.id, p.key
+from public.roles r
+join (values
+  ('scrum_master', 'timesheets.submit'),
+  ('project_manager', 'timesheets.submit'),
+  ('finance', 'timesheets.submit'),
+  ('admin', 'profile.edit'),
+  ('project_owner', 'profile.edit'),
+  ('developer', 'profile.edit'),
+  ('finance', 'profile.edit'),
+  ('scrum_master', 'profile.edit'),
+  ('project_manager', 'profile.edit'),
+  ('client', 'profile.edit')
+) as p(slug, key) on p.slug = r.slug
+on conflict do nothing;
+
+create or replace function public.protect_profile()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() = old.id and new.role_id is distinct from old.role_id then
+    raise exception 'You cannot change your own role.';
+  end if;
+  if auth.uid() = old.id and not public.has_permission('team.manage') then
+    new.hourly_cost := old.hourly_cost;
+    new.status := old.status;
+  end if;
+  if auth.uid() = old.id and not public.has_permission('profile.edit') and not public.has_permission('team.manage') then
+    new.email := old.email;
+    new.full_name := old.full_name;
+    new.title := old.title;
+    new.phone := old.phone;
+    new.about := old.about;
+  end if;
+  return new;
+end;
+$$;
+
 with ranked as (
   select id, row_number() over (
     partition by user_id, work_date

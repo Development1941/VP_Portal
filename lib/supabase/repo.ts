@@ -5,6 +5,7 @@ import { addDays, stamp, todayIso } from "@/lib/dates";
 import { prettyDate, roundMoney } from "@/lib/format";
 import { assertIntake, billingModelFor, clientForProfile, isIntakeOwner, keepDelivery, sowDefaults, statusForDelivery, type IntakeRequest } from "@/lib/delivery";
 import { packHours, unpackHours } from "@/lib/health";
+import { canUseHourlyTracker, hourlyRowsForUser, type HourlySheetRow } from "@/lib/hourly-sheet";
 import { PortalError } from "@/lib/form";
 import { canPublishStatus, presentStatus, visibleStatus } from "@/lib/status-board";
 import { presentSow } from "@/lib/sow-board";
@@ -17,6 +18,7 @@ import type {
   DirectoryUser,
   Escalation,
   Feature,
+  HourlyEntry,
   Invoice,
   Milestone,
   Payment,
@@ -486,6 +488,7 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
     fxRates: await fxHistory(),
     statusUpdates: visibleStatus(user, await statusBoard()),
     sowRecords: visibleStatus(user, await sowBoard()),
+    hourlyEntries: await hourlyBoard(user.id),
   };
 }
 
@@ -528,6 +531,25 @@ async function statusBoard() {
       fields: statusFields(row.fields),
     }),
   );
+}
+
+async function hourlyBoard(userId: string): Promise<HourlyEntry[]> {
+  const supabase = await client();
+  const { data, error } = await supabase
+    .from("hourly_entries")
+    .select("id, user_id, role_name, work_date, project_name, hours, notes")
+    .eq("user_id", userId)
+    .order("work_date", { ascending: false });
+  if (error || !data) return [];
+  return (data as Record<string, unknown>[]).map((row) => ({
+    id: text(row.id),
+    userId: text(row.user_id),
+    roleName: text(row.role_name),
+    workDate: text(row.work_date).slice(0, 10),
+    project: text(row.project_name),
+    hours: num(row.hours),
+    notes: text(row.notes),
+  }));
 }
 
 async function sowBoard() {
@@ -1246,17 +1268,33 @@ export async function saveStaff(
   await trail(user, "team.save", "user", input.id, `Saved team member ${input.fullName}.`);
 }
 
-export async function saveProfile(user: SessionUser, input: { fullName: string; title: string; phone: string; about: string }) {
+export async function saveProfile(user: SessionUser, input: { fullName: string; title: string; phone: string; about: string; email: string; password: string }) {
+  if (!can(user, "profile.edit")) throw new PortalError("You cannot update your profile.");
   if (!input.fullName.trim()) throw new PortalError("Name is required.");
+  const email = input.email.trim().toLowerCase();
+  if (!email.includes("@")) throw new PortalError("Enter a valid email.");
+  if (input.password && input.password.length < 6) throw new PortalError("Use a password of at least 6 characters.");
   const supabase = await client();
-  const { error } = await supabase.from("profiles").update({ full_name: input.fullName.trim(), title: input.title.trim(), phone: input.phone.trim() }).eq("id", user.id);
+  const { error } = await supabase
+    .from("profiles")
+    .update({ full_name: input.fullName.trim(), title: input.title.trim(), phone: input.phone.trim(), email, about: input.about.trim() })
+    .eq("id", user.id);
   raise(error);
   const admin = createServiceClient();
-  if (!admin) throw new PortalError("Set SUPABASE_SERVICE_ROLE_KEY to save profile details.");
-  const { error: metaError } = await admin.auth.admin.updateUserById(user.id, {
-    user_metadata: { full_name: input.fullName.trim(), about: input.about.trim(), avatar_url: user.avatarUrl },
-  });
-  if (metaError) throw new PortalError(metaError.message);
+  const emailChanged = email !== user.email.toLowerCase();
+  if (input.password || emailChanged) {
+    if (!admin) throw new PortalError("Set SUPABASE_SERVICE_ROLE_KEY to change the sign-in email or password.");
+    const { error: authError } = await admin.auth.admin.updateUserById(user.id, {
+      email: emailChanged ? email : undefined,
+      password: input.password || undefined,
+      user_metadata: { full_name: input.fullName.trim(), about: input.about.trim(), avatar_url: user.avatarUrl },
+    });
+    if (authError) throw new PortalError(authError.message);
+  } else if (admin) {
+    await admin.auth.admin.updateUserById(user.id, {
+      user_metadata: { full_name: input.fullName.trim(), about: input.about.trim(), avatar_url: user.avatarUrl },
+    });
+  }
   await trail(user, "profile.save", "user", user.id, "Updated their profile.");
 }
 
@@ -1729,6 +1767,57 @@ export async function saveWorkstream(user: SessionUser, input: { id: string; own
   const supabase = await client();
   const { error } = await supabase.from("workstreams").update({ owner_name: input.ownerName, target_date: uuid(input.targetDate), status: input.status }).eq("id", input.id);
   raise(error);
+}
+
+function hourlyRecord(user: SessionUser, row: HourlySheetRow) {
+  if (!row.workDate) throw new PortalError("Date is required.");
+  if (row.hours <= 0 || row.hours > 24) throw new PortalError("Hours must be greater than 0 and at most 24.");
+  return {
+    user_id: user.id,
+    role_name: user.roleName,
+    work_date: row.workDate,
+    project_name: row.project.trim(),
+    hours: row.hours,
+    notes: row.notes.trim(),
+  };
+}
+
+export async function saveHourlySheet(user: SessionUser, rows: HourlySheetRow[]) {
+  if (!canUseHourlyTracker(user)) throw new PortalError("You cannot upload an hourly tracker.");
+  const incoming = hourlyRowsForUser(rows, user).map((row) => hourlyRecord(user, row));
+  const supabase = await client();
+  const { error: clearError } = await supabase.from("hourly_entries").delete().eq("user_id", user.id);
+  raise(clearError);
+  if (incoming.length) {
+    const { error } = await supabase.from("hourly_entries").insert(incoming);
+    raise(error);
+  }
+  await trail(user, "hourly.upload", "hourly", user.id, `Uploaded ${incoming.length} hourly ${incoming.length === 1 ? "row" : "rows"} for ${user.roleName}.`);
+  return incoming.length;
+}
+
+export async function saveHourlyEntry(user: SessionUser, input: HourlyEntry) {
+  if (!canUseHourlyTracker(user)) throw new PortalError("You cannot update the hourly tracker.");
+  const payload = hourlyRecord(user, { workDate: input.workDate, project: input.project, hours: input.hours, notes: input.notes, role: "", person: "" });
+  const supabase = await client();
+  if (input.id) {
+    const { data, error } = await supabase.from("hourly_entries").update(payload).eq("id", input.id).eq("user_id", user.id).select("id");
+    raise(error);
+    if (!data?.length) throw new PortalError("That hourly row was not found.");
+  } else {
+    const { error } = await supabase.from("hourly_entries").insert(payload);
+    raise(error);
+  }
+  await trail(user, "hourly.save", "hourly", input.id, `Saved ${payload.hours}h on ${payload.work_date}.`);
+}
+
+export async function deleteHourlyEntry(user: SessionUser, id: string) {
+  if (!canUseHourlyTracker(user)) throw new PortalError("You cannot update the hourly tracker.");
+  const supabase = await client();
+  const { data, error } = await supabase.from("hourly_entries").delete().eq("id", id).eq("user_id", user.id).select("id");
+  raise(error);
+  if (!data?.length) throw new PortalError("That hourly row was not found.");
+  await trail(user, "hourly.delete", "hourly", id, "Removed an hourly row.");
 }
 
 export async function projectFile(user: SessionUser, id: string): Promise<{ name: string; type: string; bytes: Uint8Array }> {

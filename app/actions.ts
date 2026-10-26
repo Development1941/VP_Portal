@@ -9,9 +9,10 @@ import { REQUIREMENT_SOURCES, sowDefaults } from "@/lib/delivery";
 import { prettyDate } from "@/lib/format";
 import { asPermissions, list, num, str, type FormState, PortalError } from "@/lib/form";
 import { getSession, signIn, signOut } from "@/lib/session";
+import { parseHourlySheet } from "@/lib/hourly-sheet";
 import { parseStatusSheet } from "@/lib/status-sheet";
 import { parseSowSheet } from "@/lib/sow-sheet";
-import type { SowRecord } from "@/lib/types";
+import type { HourlyEntry, SowRecord } from "@/lib/types";
 import type { Client, Escalation, Feature, Milestone, Payment, Project, RateCard, Role, Task, Timesheet, Workstream } from "@/lib/types";
 
 function choice<T extends string>(form: FormData, key: string, options: readonly T[], fallback: T): T {
@@ -81,6 +82,8 @@ export async function saveProfileAction(_prev: FormState, form: FormData) {
       title: str(form, "title"),
       phone: str(form, "phone"),
       about: str(form, "about"),
+      email: str(form, "email"),
+      password: str(form, "password"),
     });
   }, "Profile updated.");
 }
@@ -598,6 +601,41 @@ export async function saveDeliverySheetAction(_prev: FormState, form: FormData) 
     }));
     await db().saveDeliverySheet(user, projectId, rows);
   }, "Task sheet saved.");
+}
+
+export async function uploadHourlyTrackerAction(_prev: FormState, form: FormData): Promise<FormState> {
+  return run(async () => {
+    const user = await actor();
+    const file = filesOf(form, "sheet")[0];
+    if (!file) throw new PortalError("Choose an Excel or CSV file.");
+    if (file.size > 4 * 1024 * 1024) throw new PortalError("That file is larger than 4 MB.");
+    const rows = parseHourlySheet(Buffer.from(await file.arrayBuffer()), file.name);
+    const count = await db().saveHourlySheet(user, rows);
+    return `Saved ${count} ${count === 1 ? "row" : "rows"} for ${user.roleName}.`;
+  });
+}
+
+export async function saveHourlyEntryAction(_prev: FormState, form: FormData): Promise<FormState> {
+  return run(async () => {
+    const user = await actor();
+    const input: HourlyEntry = {
+      id: str(form, "id"),
+      userId: user.id,
+      roleName: user.roleName,
+      workDate: str(form, "workDate"),
+      project: str(form, "project"),
+      hours: num(form, "hours"),
+      notes: str(form, "notes"),
+    };
+    await db().saveHourlyEntry(user, input);
+  }, "Hourly row saved.");
+}
+
+export async function deleteHourlyEntryAction(_prev: FormState, form: FormData): Promise<FormState> {
+  return run(async () => {
+    const user = await actor();
+    await db().deleteHourlyEntry(user, str(form, "id"));
+  }, "Hourly row removed.");
 }
 
 export async function uploadStatusSheetAction(_prev: FormState, form: FormData): Promise<FormState> {

@@ -39,11 +39,15 @@ export default async function ProfilePage() {
           </label>
           <label className="field">
             <span>Email</span>
-            <input value={user.email} readOnly />
+            <input type="email" name="email" defaultValue={user.email} required />
           </label>
           <label className="field">
             <span>Role</span>
             <input value={user.roleName} readOnly />
+          </label>
+          <label className="field">
+            <span>New password</span>
+            <input type="password" name="password" placeholder="Leave blank to keep" autoComplete="new-password" />
           </label>
           <label className="field wide">
             <span>About</span>

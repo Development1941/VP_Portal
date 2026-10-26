@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ActionForm, Submit } from "@/components/common/forms";
 import { Badge, PageHeader, Stat } from "@/components/common/ui";
-import { saveSowRecordAction, uploadSowSheetAction, uploadStatusSheetAction } from "@/app/actions";
+import { deleteHourlyEntryAction, saveHourlyEntryAction, saveSowRecordAction, uploadHourlyTrackerAction, uploadSowSheetAction, uploadStatusSheetAction } from "@/app/actions";
 import { ProjectHealthList } from "@/components/projects/health-list";
 import { can } from "@/lib/access";
 import { addDays, startOfWeek, todayIso } from "@/lib/dates";
@@ -10,8 +10,9 @@ import { nameOf, projectOf, requirePage } from "@/lib/page";
 import { dues, isOverdue, projectEconomics } from "@/lib/reports";
 import { showCommercials } from "@/lib/commercial";
 import { canPublishStatus, extraStatusColumns, groupStatus, latestStatus, statusNeedsAttention, statusTone } from "@/lib/status-board";
+import { canUseHourlyTracker } from "@/lib/hourly-sheet";
 import { sowAttentionNote, sowNeedsAttention } from "@/lib/sow-board";
-import type { SowRecord } from "@/lib/types";
+import type { HourlyEntry, SowRecord } from "@/lib/types";
 
 export default async function DashboardPage() {
   const { user, data } = await requirePage(["dashboard.view"]);
@@ -38,6 +39,9 @@ export default async function DashboardPage() {
   const sowBids = data.sowRecords.filter((row) => row.kind === "bid");
   const sowAttention = data.sowRecords.filter(sowNeedsAttention);
   const statusAttention = board.rows.filter((row) => statusNeedsAttention(row.status));
+  const trackHours = canUseHourlyTracker(user);
+  const myHours = data.hourlyEntries.filter((entry) => entry.userId === user.id);
+  const hourProjects = hourGroups(myHours);
 
   return (
     <>
@@ -281,7 +285,109 @@ export default async function DashboardPage() {
             {!statusAttention.length && !sowAttention.length && !returned && !approvals.length && !(showCommercials && openDues.length) && !milestones.length ? <p className="empty">No items require attention.</p> : null}
           </div>
         </section>
+      {trackHours ? (
+        <section className="card status-board" id="hourly-tracker">
+          <div className="card-head">
+            <div>
+              <h2>Hourly tracker</h2>
+              <span className="muted">Your role · {user.roleName}</span>
+            </div>
+            <ActionForm action={uploadHourlyTrackerAction} className="status-upload">
+              <label className="file-field">
+                Excel or CSV
+                <input type="file" name="sheet" accept=".csv,.xlsx,.xls" required />
+              </label>
+              <Submit>Upload my role</Submit>
+            </ActionForm>
+          </div>
+          {hourProjects.length ? (
+            <div className="hour-projects">
+              {hourProjects.map((group) => (
+                <details key={group.name} className="hour-project">
+                  <summary>
+                    <span className="hour-project-name">{group.name}</span>
+                    <span className="muted">{hoursLabel(group.hours)} · {group.rows.length} {group.rows.length === 1 ? "entry" : "entries"}</span>
+                  </summary>
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Date</th>
+                          <th className="num">Hours</th>
+                          <th>Notes</th>
+                          <th>Edit</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {group.rows.map((row) => (
+                          <tr key={row.id}>
+                            <td>{prettyDate(row.workDate)}</td>
+                            <td className="num">{hoursLabel(row.hours)}</td>
+                            <td className="remarks">{row.notes || "—"}</td>
+                            <td><HourlyEdit row={row} /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              ))}
+            </div>
+          ) : (
+            <p className="empty">No hours uploaded for your role yet.</p>
+          )}
+        </section>
+      ) : null}
     </>
+  );
+}
+
+function hourGroups(rows: HourlyEntry[]) {
+  const groups = new Map<string, HourlyEntry[]>();
+  for (const row of rows) {
+    const name = row.project.trim() || "No project";
+    const list = groups.get(name) ?? [];
+    list.push(row);
+    groups.set(name, list);
+  }
+  return [...groups.entries()]
+    .map(([name, items]) => ({
+      name,
+      hours: items.reduce((sum, row) => sum + row.hours, 0),
+      rows: items.sort((a, b) => b.workDate.localeCompare(a.workDate)),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function HourlyEdit({ row }: { row: HourlyEntry }) {
+  return (
+    <details className="sow-edit">
+      <summary>Edit</summary>
+      <ActionForm action={saveHourlyEntryAction} className="sow-edit-form">
+        <input type="hidden" name="id" value={row.id} />
+        <label className="field">
+          <span>Date</span>
+          <input type="date" name="workDate" defaultValue={row.workDate} required />
+        </label>
+        <label className="field">
+          <span>Project</span>
+          <input name="project" defaultValue={row.project} />
+        </label>
+        <label className="field">
+          <span>Hours</span>
+          <input name="hours" type="number" min="0.25" max="24" step="0.25" defaultValue={row.hours} required />
+        </label>
+        <label className="field">
+          <span>Notes</span>
+          <input name="notes" defaultValue={row.notes} />
+        </label>
+        <Submit>Save</Submit>
+      </ActionForm>
+      <ActionForm action={deleteHourlyEntryAction}>
+        <input type="hidden" name="id" value={row.id} />
+        <Submit variant="ghost">Remove</Submit>
+      </ActionForm>
+    </details>
   );
 }
 

@@ -7,6 +7,7 @@ import { addDays, stamp, todayIso } from "@/lib/dates";
 import { currencyCode, isCurrency } from "@/lib/currency";
 import { convertMoney, crossRate, marketBoard } from "@/lib/fx";
 import { nid, prettyDate, roundMoney } from "@/lib/format";
+import { canUseHourlyTracker, hourlyRowsForUser, type HourlySheetRow } from "@/lib/hourly-sheet";
 import { PortalError } from "@/lib/form";
 import { nextInvoiceStatus, resolveBillRate } from "@/lib/metrics";
 import type {
@@ -21,6 +22,7 @@ import type {
   RateCard,
   Role,
   SessionUser,
+  HourlyEntry,
   SowRecord,
   Task,
   StatusUpdate,
@@ -53,6 +55,7 @@ function hydrate(store: DemoStore): DemoStore {
   store.tasks = (store.tasks ?? []).map((task) => ({ ...task, startDate: task.startDate || "", actualHours: task.actualHours || 0 }));
   store.escalations = store.escalations ?? [];
   store.files = store.files ?? [];
+  store.hourlyEntries = store.hourlyEntries ?? [];
   store.workstreams = store.workstreams?.length ? store.workstreams : defaultWorkstreams();
   store.currency = currencyCode(store.currency);
   store.fxRates = store.fxRates ?? [];
@@ -82,6 +85,15 @@ function ensureStudioRoles(store: DemoStore) {
       isSystem: true,
       locked: false,
     });
+  }
+  for (const [slug, permissions] of Object.entries(ROLE_PRESETS)) {
+    const role = store.roles.find((item) => item.slug === slug);
+    if (!role) continue;
+    for (const permission of permissions) {
+      if (!store.grants.some((grant) => grant.roleId === role.id && grant.permission === permission)) {
+        store.grants.push({ roleId: role.id, permission });
+      }
+    }
   }
   const admin = store.roles.find((role) => role.slug === "admin");
   if (admin) {
@@ -351,6 +363,7 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
     fxRates: store.fxRates ?? [],
     statusUpdates: visibleStatus(user, (store.statusSheetReady ? store.statusUpdates ?? [] : STATUS_UPDATES).map(presentStatus)),
     sowRecords: visibleStatus(user, (store.sowSheetReady ? store.sowRecords ?? [] : DEFAULT_SOW).map(presentSow)),
+    hourlyEntries: (store.hourlyEntries ?? []).filter((entry) => entry.userId === user.id),
   };
 }
 
@@ -871,16 +884,74 @@ export function saveStaff(
   });
 }
 
-export function saveProfile(user: SessionUser, input: { fullName: string; title: string; phone: string; about: string }) {
+export function saveProfile(user: SessionUser, input: { fullName: string; title: string; phone: string; about: string; email: string; password: string }) {
+  if (!can(user, "profile.edit")) throw new PortalError("You cannot update your profile.");
   if (!input.fullName.trim()) throw new PortalError("Name is required.");
+  const email = input.email.trim().toLowerCase();
+  if (!email.includes("@")) throw new PortalError("Enter a valid email.");
+  if (input.password && input.password.length < 6) throw new PortalError("Use a password of at least 6 characters.");
   return mutate((store) => {
     const person = store.users.find((item) => item.id === user.id);
     if (!person) throw new PortalError("That profile was not found.");
+    if (store.users.some((item) => item.id !== person.id && item.email.toLowerCase() === email)) {
+      throw new PortalError("That email is already in use.");
+    }
     person.fullName = input.fullName.trim();
     person.title = input.title.trim();
     person.phone = input.phone.trim();
     person.about = input.about.trim();
+    person.email = email;
+    if (input.password) person.password = input.password;
     audit(store, user, "profile.save", "user", user.id, "Updated their profile.");
+  });
+}
+
+function hourlyPayload(user: SessionUser, row: HourlySheetRow, id = ""): HourlyEntry {
+  if (!row.workDate) throw new PortalError("Date is required.");
+  if (row.hours <= 0 || row.hours > 24) throw new PortalError("Hours must be greater than 0 and at most 24.");
+  return {
+    id: id || nid("hour"),
+    userId: user.id,
+    roleName: user.roleName,
+    workDate: row.workDate,
+    project: row.project.trim(),
+    hours: row.hours,
+    notes: row.notes.trim(),
+  };
+}
+
+export function saveHourlySheet(user: SessionUser, rows: HourlySheetRow[]) {
+  if (!canUseHourlyTracker(user)) throw new PortalError("You cannot upload an hourly tracker.");
+  const incoming = hourlyRowsForUser(rows, user).map((row) => hourlyPayload(user, row));
+  return mutate((store) => {
+    store.hourlyEntries = (store.hourlyEntries ?? []).filter((entry) => entry.userId !== user.id);
+    store.hourlyEntries.unshift(...incoming);
+    audit(store, user, "hourly.upload", "hourly", user.id, `Uploaded ${incoming.length} hourly ${incoming.length === 1 ? "row" : "rows"} for ${user.roleName}.`);
+    return incoming.length;
+  });
+}
+
+export function saveHourlyEntry(user: SessionUser, input: HourlyEntry) {
+  if (!canUseHourlyTracker(user)) throw new PortalError("You cannot update the hourly tracker.");
+  const next = hourlyPayload(user, { workDate: input.workDate, project: input.project, hours: input.hours, notes: input.notes, role: "", person: "" }, input.id);
+  return mutate((store) => {
+    const entries = store.hourlyEntries ?? [];
+    const existing = entries.find((entry) => entry.id === input.id && entry.userId === user.id);
+    if (input.id && !existing) throw new PortalError("That hourly row was not found.");
+    if (existing) Object.assign(existing, next, { id: existing.id });
+    else entries.unshift(next);
+    store.hourlyEntries = entries;
+    audit(store, user, "hourly.save", "hourly", next.id, `Saved ${next.hours}h on ${next.workDate}.`);
+  });
+}
+
+export function deleteHourlyEntry(user: SessionUser, id: string) {
+  if (!canUseHourlyTracker(user)) throw new PortalError("You cannot update the hourly tracker.");
+  return mutate((store) => {
+    const existing = (store.hourlyEntries ?? []).find((entry) => entry.id === id && entry.userId === user.id);
+    if (!existing) throw new PortalError("That hourly row was not found.");
+    store.hourlyEntries = store.hourlyEntries.filter((entry) => entry.id !== id);
+    audit(store, user, "hourly.delete", "hourly", id, "Removed an hourly row.");
   });
 }
 

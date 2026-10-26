@@ -232,6 +232,22 @@ p { margin: 0; }
 .status-upload input[type="file"] { max-width: 240px; font-size: 13px; }
 .sow-bids-head { margin-top: 18px; }
 .sow-bids-head h3 { margin: 0; font-size: 16px; }
+.hour-projects { display: grid; gap: 8px; }
+.hour-project { border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
+.hour-project summary {
+  cursor: pointer; list-style: none;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 14px; font-weight: 650;
+}
+.hour-project summary::-webkit-details-marker { display: none; }
+.hour-project-name { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.hour-project-name::before {
+  content: ""; width: 8px; height: 8px; flex: none;
+  border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg); margin-top: -2px;
+}
+.hour-project[open] .hour-project-name::before { transform: rotate(45deg); margin-top: 2px; }
+.hour-project .table-wrap { padding: 0 12px 12px; }
 .sow-edit summary { cursor: pointer; color: var(--pine); font-weight: 650; }
 .sow-edit-form { display: grid; gap: 8px; min-width: 220px; margin-top: 8px; }
 .status-board a { overflow-wrap: anywhere; }
