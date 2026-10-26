@@ -24,6 +24,7 @@ const nextConfig: NextConfig = {
   },
   experimental: {
     devtoolSegmentExplorer: false,
+    optimizePackageImports: ["lucide-react"],
     serverActions: { bodySizeLimit: "4mb" },
   },
   images: {

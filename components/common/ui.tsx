@@ -139,14 +139,37 @@ export function PageHeader({
   );
 }
 
-export function Stat({ label, value, note }: { label: string; value: string; note?: string }) {
-  return (
-    <article className="stat">
-      <span>{label}</span>
-      <b>{value}</b>
-      {note ? <em>{note}</em> : null}
-    </article>
+export function Stat({ label, value, note, detail, href }: { label: string; value: string; note?: string; detail?: string; href?: string }) {
+  const explanation = detail || note;
+  const face = (
+    <>
+      <span className="stat-face">
+        <span>{label}</span>
+        <b>{value}</b>
+      </span>
+      {explanation ? (
+        <span className="stat-face stat-back">
+          <em>{explanation}</em>
+        </span>
+      ) : null}
+    </>
   );
+  if (!explanation || !detail) {
+    const plain = (
+      <>
+        <span>{label}</span>
+        <b>{value}</b>
+        {note ? <em>{note}</em> : null}
+      </>
+    );
+    if (href) return <Link href={href} className="stat">{plain}</Link>;
+    return <article className="stat">{plain}</article>;
+  }
+  const body = <span className="stat-flip-inner">{face}</span>;
+  const labelText = `${label}, ${value}. ${explanation}`;
+  if (href?.startsWith("#")) return <a href={href} className="stat stat-flip" aria-label={labelText}>{body}</a>;
+  if (href) return <Link href={href} className="stat stat-flip" aria-label={labelText}>{body}</Link>;
+  return <article className="stat stat-flip" aria-label={labelText}>{body}</article>;
 }
 
 export function Meter({ value, tone }: { value: number; tone?: string }) {

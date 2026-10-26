@@ -7,8 +7,9 @@ import { addDays, stamp, todayIso } from "@/lib/dates";
 import { currencyCode, isCurrency } from "@/lib/currency";
 import { convertMoney, crossRate, marketBoard } from "@/lib/fx";
 import { nid, prettyDate, roundMoney } from "@/lib/format";
-import { canUseHourlyTracker, hourlyRowsForUser, type HourlySheetRow } from "@/lib/hourly-sheet";
+import { canUseHourlyTracker, hourlyRowsForUser, isResourceAllocation, presentHourlyEntry, type HourlySheetRow } from "@/lib/hourly-sheet";
 import { PortalError } from "@/lib/form";
+import { invalidatePortalCache } from "@/lib/portal-cache";
 import { nextInvoiceStatus, resolveBillRate } from "@/lib/metrics";
 import type {
   Client,
@@ -38,6 +39,16 @@ import { buildSeed, type DemoStore, type DemoUser } from "@/lib/demo/seed";
 
 const filePath = path.join(process.cwd(), ".data", "store.json");
 let queue: Promise<unknown> = Promise.resolve();
+let fileCache: { stamp: string; store: DemoStore } | null = null;
+
+export function storeStamp() {
+  try {
+    const stat = fs.statSync(filePath);
+    return `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return "missing";
+  }
+}
 
 function read(): DemoStore {
   if (!fs.existsSync(filePath)) {
@@ -45,9 +56,13 @@ function read(): DemoStore {
     write(seed);
     return seed;
   }
+  const stamp = storeStamp();
+  if (fileCache?.stamp === stamp) return fileCache.store;
   const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as DemoStore;
   if (!parsed.users || !parsed.roles) return buildSeed();
-  return hydrate(parsed);
+  const store = hydrate(parsed);
+  fileCache = { stamp: storeStamp(), store };
+  return store;
 }
 
 function hydrate(store: DemoStore): DemoStore {
@@ -228,6 +243,8 @@ function write(store: DemoStore) {
   const temp = `${filePath}.tmp`;
   fs.writeFileSync(temp, JSON.stringify(store, null, 2));
   fs.renameSync(temp, filePath);
+  fileCache = { stamp: storeStamp(), store };
+  invalidatePortalCache();
 }
 
 function mutate<T>(fn: (store: DemoStore) => T): Promise<T> {
@@ -363,7 +380,7 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
     fxRates: store.fxRates ?? [],
     statusUpdates: visibleStatus(user, (store.statusSheetReady ? store.statusUpdates ?? [] : STATUS_UPDATES).map(presentStatus)),
     sowRecords: visibleStatus(user, (store.sowSheetReady ? store.sowRecords ?? [] : DEFAULT_SOW).map(presentSow)),
-    hourlyEntries: (store.hourlyEntries ?? []).filter((entry) => entry.userId === user.id),
+    hourlyEntries: visibleHours(user, store.hourlyEntries ?? []),
   };
 }
 
@@ -906,17 +923,38 @@ export function saveProfile(user: SessionUser, input: { fullName: string; title:
   });
 }
 
+function visibleHours(user: SessionUser, entries: HourlyEntry[]) {
+  const ready = entries.map((entry) => presentHourlyEntry({ ...entry, role: "", person: entry.resource || "" }));
+  if (canUseHourlyTracker(user)) return ready;
+  if (can(user, "projects.view") || can(user, "projects.view_all") || can(user, "tasks.view") || can(user, "tasks.manage")) return ready.filter(isResourceAllocation);
+  return ready.filter((entry) => entry.userId === user.id);
+}
+
 function hourlyPayload(user: SessionUser, row: HourlySheetRow, id = ""): HourlyEntry {
-  if (!row.workDate) throw new PortalError("Date is required.");
-  if (row.hours <= 0 || row.hours > 24) throw new PortalError("Hours must be greater than 0 and at most 24.");
+  if (row.hours < 0 || row.hours > 24) throw new PortalError("Hours Spent must be from 0 to 24.");
+  if (!row.workDate && !row.task && !row.project) throw new PortalError("Each row needs a project or a task.");
   return {
     id: id || nid("hour"),
     userId: user.id,
     roleName: user.roleName,
-    workDate: row.workDate,
+    sheetNo: row.sheetNo || 0,
     project: row.project.trim(),
+    sprint: row.sprint.trim(),
+    resource: row.resource.trim(),
+    task: (row.task || row.notes).trim(),
+    workDate: row.workDate,
     hours: row.hours,
-    notes: row.notes.trim(),
+    status: row.status.trim(),
+    company: row.company.trim(),
+    estStart: row.estStart,
+    estEnd: row.estEnd,
+    estimatedHours: row.estimatedHours,
+    targetHours: row.targetHours,
+    actualStart: row.actualStart,
+    actualEnd: row.actualEnd,
+    actualHours: row.actualHours,
+    approval: row.approval.trim(),
+    notes: (row.task || row.notes).trim(),
   };
 }
 
@@ -933,7 +971,28 @@ export function saveHourlySheet(user: SessionUser, rows: HourlySheetRow[]) {
 
 export function saveHourlyEntry(user: SessionUser, input: HourlyEntry) {
   if (!canUseHourlyTracker(user)) throw new PortalError("You cannot update the hourly tracker.");
-  const next = hourlyPayload(user, { workDate: input.workDate, project: input.project, hours: input.hours, notes: input.notes, role: "", person: "" }, input.id);
+  const next = hourlyPayload(user, {
+    sheetNo: input.sheetNo,
+    project: input.project,
+    sprint: input.sprint,
+    resource: input.resource,
+    task: input.task || input.notes,
+    workDate: input.workDate,
+    hours: input.hours,
+    status: input.status,
+    company: input.company,
+    estStart: input.estStart,
+    estEnd: input.estEnd,
+    estimatedHours: input.estimatedHours,
+    targetHours: input.targetHours,
+    actualStart: input.actualStart,
+    actualEnd: input.actualEnd,
+    actualHours: input.actualHours,
+    approval: input.approval,
+    notes: input.task || input.notes,
+    role: "",
+    person: input.resource,
+  }, input.id);
   return mutate((store) => {
     const entries = store.hourlyEntries ?? [];
     const existing = entries.find((entry) => entry.id === input.id && entry.userId === user.id);

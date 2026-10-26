@@ -2,7 +2,9 @@ import Link from "next/link";
 import { activateProjectAction } from "@/app/actions";
 import { ActionForm, Submit } from "@/components/common/forms";
 import { Badge, Denied, Meter, PageHeader } from "@/components/common/ui";
+import { ResourceAllocation } from "@/components/dashboard/resource-allocation";
 import { canEditDelivery } from "@/lib/access";
+import { canUseHourlyTracker } from "@/lib/hourly-sheet";
 import { addDays, startOfWeek } from "@/lib/dates";
 import { hoursLabel } from "@/lib/format";
 import { nameOf, requirePage } from "@/lib/page";
@@ -17,6 +19,7 @@ export default async function ResourcesPage() {
   return (
     <>
       <PageHeader eyebrow="Operations" title="Resource allocation" />
+      <ResourceAllocation rows={data.hourlyEntries} editable={canUseHourlyTracker(user)} />
       <section className="card">
         <div className="table-wrap">
           <table>

@@ -5,7 +5,7 @@ import { addDays, stamp, todayIso } from "@/lib/dates";
 import { prettyDate, roundMoney } from "@/lib/format";
 import { assertIntake, billingModelFor, clientForProfile, isIntakeOwner, keepDelivery, sowDefaults, statusForDelivery, type IntakeRequest } from "@/lib/delivery";
 import { packHours, unpackHours } from "@/lib/health";
-import { canUseHourlyTracker, hourlyRowsForUser, type HourlySheetRow } from "@/lib/hourly-sheet";
+import { canUseHourlyTracker, hourlyRowsForUser, isResourceAllocation, type HourlySheetRow } from "@/lib/hourly-sheet";
 import { PortalError } from "@/lib/form";
 import { canPublishStatus, presentStatus, visibleStatus } from "@/lib/status-board";
 import { presentSow } from "@/lib/sow-board";
@@ -355,7 +355,7 @@ function rows(result: { data: unknown }) {
   return (result.data ?? []) as Row[];
 }
 
-export async function workspace(user: SessionUser): Promise<Workspace> {
+async function loadPortal(user: SessionUser) {
   const supabase = await client();
   const seeGrants = can(user, "settings.manage");
   const seeRates = can(user, "billing.rates") || can(user, "reports.project") || can(user, "reports.financial");
@@ -363,7 +363,47 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
   const seePayments = can(user, "payments.view") || seeMoney;
   const seeAudit = can(user, "audit.view");
   const showCost = can(user, "team.manage") || can(user, "reports.financial") || can(user, "payments.manage") || can(user, "reports.project");
-  const [rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, costRes, escalationRes, fileRes, workstreamRes, studioRes] =
+  const bundled = await supabase.rpc("portal_bundle", {
+    p_grants: seeGrants,
+    p_rates: seeRates,
+    p_money: seeMoney,
+    p_payments: seePayments,
+    p_audit: seeAudit,
+    p_costs: showCost,
+  });
+  if (!bundled.error && bundled.data && typeof bundled.data === "object") {
+    const raw = bundled.data as Record<string, unknown>;
+    const studio = raw.studio;
+    return {
+      showCost,
+      rolesRes: ok(asList(raw.roles)),
+      grantRes: ok(asList(raw.grants)),
+      profileRes: ok(asList(raw.profiles)),
+      clientRes: ok(asList(raw.clients)),
+      projectRes: ok(asList(raw.projects)),
+      memberRes: ok(asList(raw.members)),
+      milestoneRes: ok(asList(raw.milestones)),
+      featureRes: ok(asList(raw.features)),
+      taskRes: ok(asList(raw.tasks)),
+      timeRes: ok(asList(raw.timesheets)),
+      rateRes: ok(asList(raw.rates)),
+      invoiceRes: ok(asList(raw.invoices)),
+      lineRes: ok(asList(raw.lines)),
+      paymentRes: ok(asList(raw.payments)),
+      noteRes: ok(asList(raw.notifications)),
+      auditRes: ok(asList(raw.audit)),
+      costRes: ok(asList(raw.costs)),
+      escalationRes: ok(asList(raw.escalations)),
+      fileRes: ok(asList(raw.files)),
+      workstreamRes: ok(asList(raw.workstreams)),
+      studioRes: { data: studio && typeof studio === "object" && !Array.isArray(studio) ? studio as { currency?: string } : null, error: null as null },
+      fxRates: presentFxRows(asList(raw.fx) as Row[]),
+      statusUpdates: presentStatusRows(asList(raw.status) as Record<string, unknown>[]),
+      sowRecords: presentSowRows(asList(raw.sow) as Record<string, unknown>[]),
+      hourlyEntries: presentHourlyRows(asList(raw.hourly) as Record<string, unknown>[], user),
+    };
+  }
+  const [rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, costRes, escalationRes, fileRes, workstreamRes, studioRes, fxRates, statusUpdates, sowRecords, hourlyEntries] =
     await Promise.all([
       supabase.from("roles").select("id, name, slug, description, is_system, locked").order("name"),
       seeGrants ? supabase.from("role_permissions").select("role_id, permission_key") : skipped(),
@@ -386,18 +426,59 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
       supabase.from("project_files").select("id, project_id, kind, file_name, created_by, created_at").order("created_at", { ascending: false }),
       supabase.from("workstreams").select("id, name, owner_name, target_date, status").order("name"),
       supabase.from("studio_settings").select("currency").eq("id", 1).maybeSingle(),
+      fxHistory(supabase),
+      statusBoard(supabase),
+      sowBoard(supabase),
+      hourlyBoard(supabase, user),
     ]);
   for (const result of [rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, escalationRes, fileRes, workstreamRes, studioRes]) {
     raise(result.error);
   }
+  return { showCost, rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, costRes, escalationRes, fileRes, workstreamRes, studioRes, fxRates, statusUpdates, sowRecords, hourlyEntries };
+}
+
+function asList(value: unknown) {
+  return Array.isArray(value) ? value : [];
+}
+
+export async function workspace(user: SessionUser): Promise<Workspace> {
+  const loaded: {
+    showCost: boolean;
+    rolesRes: { data: Row[] | null; error: { message: string } | null };
+    grantRes: { data: Row[] | null; error: { message: string } | null };
+    profileRes: { data: Row[] | null; error: { message: string } | null };
+    clientRes: { data: Row[] | null; error: { message: string } | null };
+    projectRes: { data: Row[] | null; error: { message: string } | null };
+    memberRes: { data: Row[] | null; error: { message: string } | null };
+    milestoneRes: { data: Row[] | null; error: { message: string } | null };
+    featureRes: { data: Row[] | null; error: { message: string } | null };
+    taskRes: { data: Row[] | null; error: { message: string } | null };
+    timeRes: { data: Row[] | null; error: { message: string } | null };
+    rateRes: { data: Row[] | null; error: { message: string } | null };
+    invoiceRes: { data: Row[] | null; error: { message: string } | null };
+    lineRes: { data: Row[] | null; error: { message: string } | null };
+    paymentRes: { data: Row[] | null; error: { message: string } | null };
+    noteRes: { data: Row[] | null; error: { message: string } | null };
+    auditRes: { data: Row[] | null; error: { message: string } | null };
+    costRes: { data: Row[] | null; error: { message: string } | null };
+    escalationRes: { data: Row[] | null; error: { message: string } | null };
+    fileRes: { data: Row[] | null; error: { message: string } | null };
+    workstreamRes: { data: Row[] | null; error: { message: string } | null };
+    studioRes: { data: { currency?: string } | null; error: { message: string } | null };
+    fxRates: Workspace["fxRates"];
+    statusUpdates: StatusUpdate[];
+    sowRecords: SowRecord[];
+    hourlyEntries: HourlyEntry[];
+  } = await loadPortal(user);
+  const { showCost, rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, costRes, escalationRes, fileRes, workstreamRes, studioRes, fxRates, statusUpdates, sowRecords, hourlyEntries } = loaded;
 
   const roles = (rolesRes.data ?? []).map(mapRole);
   const roleById = new Map(roles.map((role) => [role.id, role]));
   const costs = new Map<string, number>(((costRes.data ?? []) as Row[]).map((row) => [String(row.id), num(row.hourly_cost)]));
   const users: DirectoryUser[] = (profileRes.data ?? []).map((row) => {
-    const role = roleById.get(row.role_id);
+    const role = roleById.get(text(row.role_id));
     return {
-      id: row.id,
+      id: text(row.id),
       fullName: text(row.full_name),
       email: text(row.email),
       title: text(row.title),
@@ -405,8 +486,8 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
       roleId: text(row.role_id),
       roleName: role?.name ?? "Unassigned",
       roleSlug: role?.slug ?? "",
-      status: row.status,
-      hourlyCost: showCost ? costs.get(row.id) ?? 0 : 0,
+      status: oneOf(row.status, ["active", "invited", "inactive"] as const, "active"),
+      hourlyCost: showCost ? costs.get(text(row.id)) ?? 0 : 0,
     };
   });
   const members = (memberRes.data ?? []).map((row) => ({
@@ -465,8 +546,8 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
       .filter((line) => rows(invoiceRes).some((invoice) => invoice.id === line.invoiceId && ids.has(text(invoice.project_id)))),
     payments: rows(paymentRes).map(mapPayment).filter((item) => !item.projectId || ids.has(item.projectId)),
     notifications: (noteRes.data ?? []).map((row) => ({
-      id: row.id,
-      userId: row.user_id,
+      id: text(row.id),
+      userId: text(row.user_id),
       title: text(row.title),
       body: text(row.body),
       href: text(row.href),
@@ -485,10 +566,10 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
     escalations: rows(escalationRes).map(mapEscalation).filter((item) => ids.has(item.projectId)),
     files: rows(fileRes).map(mapFile).filter((item) => ids.has(item.projectId)),
     workstreams: rows(workstreamRes).map(mapWorkstream),
-    fxRates: await fxHistory(),
-    statusUpdates: visibleStatus(user, await statusBoard()),
-    sowRecords: visibleStatus(user, await sowBoard()),
-    hourlyEntries: await hourlyBoard(user.id),
+    fxRates,
+    statusUpdates: visibleStatus(user, statusUpdates),
+    sowRecords: visibleStatus(user, sowRecords),
+    hourlyEntries,
   };
 }
 
@@ -502,23 +583,8 @@ function statusFields(value: unknown) {
   return fields;
 }
 
-async function statusBoard() {
-  const supabase = await client();
-  const full = await supabase
-    .from("status_updates")
-    .select("sheet_no, project_name, sub_item, status, remarks, status_date, sheet_label, company, fields")
-    .order("status_date", { ascending: false })
-    .order("sheet_no");
-  const data = full.error
-    ? (
-        await supabase
-          .from("status_updates")
-          .select("sheet_no, project_name, sub_item, status, remarks, status_date")
-          .order("status_date", { ascending: false })
-          .order("sheet_no")
-      ).data
-    : full.data;
-  return ((data ?? []) as Record<string, unknown>[]).map((row) =>
+function presentStatusRows(data: Record<string, unknown>[]) {
+  return data.map((row) =>
     presentStatus({
       sheetNo: num(row.sheet_no),
       project: text(row.project_name),
@@ -533,32 +599,10 @@ async function statusBoard() {
   );
 }
 
-async function hourlyBoard(userId: string): Promise<HourlyEntry[]> {
-  const supabase = await client();
-  const { data, error } = await supabase
-    .from("hourly_entries")
-    .select("id, user_id, role_name, work_date, project_name, hours, notes")
-    .eq("user_id", userId)
-    .order("work_date", { ascending: false });
-  if (error || !data) return [];
-  return (data as Record<string, unknown>[]).map((row) => ({
+function presentSowRows(data: Record<string, unknown>[]) {
+  return data.map((row) => presentSow({
     id: text(row.id),
-    userId: text(row.user_id),
-    roleName: text(row.role_name),
-    workDate: text(row.work_date).slice(0, 10),
-    project: text(row.project_name),
-    hours: num(row.hours),
-    notes: text(row.notes),
-  }));
-}
-
-async function sowBoard() {
-  const supabase = await client();
-  const { data, error } = await supabase.from("sow_records").select("id, kind, sheet_no, project_name, sprint, link, signature, signed_on, change_request, company").order("sheet_no");
-  if (error || !data) return [];
-  return (data as Record<string, unknown>[]).map((row) => presentSow({
-    id: text(row.id),
-    kind: text(row.kind) === "bid" ? "bid" : "status",
+    kind: text(row.kind) === "bid" ? "bid" as const : "status" as const,
     sheetNo: num(row.sheet_no),
     project: text(row.project_name),
     sprint: text(row.sprint),
@@ -570,11 +614,37 @@ async function sowBoard() {
   }));
 }
 
-async function fxHistory() {
-  const supabase = await client();
-  const { data, error } = await supabase.from("fx_rates").select("id, from_currency, to_currency, rate, source, recorded_at").order("recorded_at", { ascending: false }).limit(20);
-  if (error) return [];
-  return (data ?? []).map((row) => ({
+function presentHourlyRows(data: Record<string, unknown>[], user: SessionUser): HourlyEntry[] {
+  const mapped = data.map((row) => ({
+    id: text(row.id),
+    userId: text(row.user_id),
+    roleName: text(row.role_name),
+    sheetNo: num(row.sheet_no),
+    project: text(row.project_name),
+    sprint: text(row.sprint),
+    resource: text(row.resource_name),
+    task: text(row.task) || text(row.notes),
+    workDate: text(row.work_date).slice(0, 10),
+    hours: num(row.hours),
+    status: text(row.status),
+    company: text(row.company),
+    estStart: text(row.est_start).slice(0, 10),
+    estEnd: text(row.est_end).slice(0, 10),
+    estimatedHours: row.estimated_hours == null || row.estimated_hours === "" ? null : num(row.estimated_hours),
+    targetHours: row.target_hours == null || row.target_hours === "" ? null : num(row.target_hours),
+    actualStart: text(row.actual_start).slice(0, 10),
+    actualEnd: text(row.actual_end).slice(0, 10),
+    actualHours: row.actual_hours == null || row.actual_hours === "" ? null : num(row.actual_hours),
+    approval: text(row.approval),
+    notes: text(row.notes),
+  }));
+  if (canUseHourlyTracker(user)) return mapped;
+  if (can(user, "projects.view") || can(user, "projects.view_all") || can(user, "tasks.view") || can(user, "tasks.manage")) return mapped.filter(isResourceAllocation);
+  return mapped.filter((row) => row.userId === user.id);
+}
+
+function presentFxRows(data: Row[]) {
+  return data.map((row) => ({
     id: text(row.id),
     from: text(row.from_currency),
     to: text(row.to_currency),
@@ -582,6 +652,52 @@ async function fxHistory() {
     source: text(row.source),
     recordedAt: text(row.recorded_at),
   }));
+}
+
+function ok(data: unknown): { data: Row[] | null; error: null } {
+  return { data: Array.isArray(data) ? data as Row[] : [], error: null };
+}
+
+async function statusBoard(supabase: SupabaseClient) {
+  const full = await supabase
+    .from("status_updates")
+    .select("sheet_no, project_name, sub_item, status, remarks, status_date, sheet_label, company, fields")
+    .order("status_date", { ascending: false })
+    .order("sheet_no");
+  const data = full.error
+    ? (
+        await supabase
+          .from("status_updates")
+          .select("sheet_no, project_name, sub_item, status, remarks, status_date")
+          .order("status_date", { ascending: false })
+          .order("sheet_no")
+      ).data
+    : full.data;
+  return presentStatusRows((data ?? []) as Record<string, unknown>[]);
+}
+
+async function hourlyBoard(supabase: SupabaseClient, user: SessionUser): Promise<HourlyEntry[]> {
+  const columns = "id, user_id, role_name, work_date, project_name, hours, notes, sheet_no, sprint, resource_name, task, status, company, est_start, est_end, estimated_hours, target_hours, actual_start, actual_end, actual_hours, approval";
+  const shared = canUseHourlyTracker(user) || can(user, "projects.view") || can(user, "projects.view_all") || can(user, "tasks.view") || can(user, "tasks.manage");
+  let query = supabase.from("hourly_entries").select(columns).order("sheet_no");
+  if (!shared) query = query.eq("user_id", user.id);
+  const chosen = await query;
+  const data = chosen.error
+    ? (await supabase.from("hourly_entries").select("id, user_id, role_name, work_date, project_name, hours, notes").eq("user_id", user.id).order("work_date", { ascending: false })).data
+    : chosen.data;
+  return presentHourlyRows((data ?? []) as Record<string, unknown>[], user);
+}
+
+async function sowBoard(supabase: SupabaseClient) {
+  const { data, error } = await supabase.from("sow_records").select("id, kind, sheet_no, project_name, sprint, link, signature, signed_on, change_request, company").order("sheet_no");
+  if (error || !data) return [];
+  return presentSowRows(data as Record<string, unknown>[]);
+}
+
+async function fxHistory(supabase: SupabaseClient) {
+  const { data, error } = await supabase.from("fx_rates").select("id, from_currency, to_currency, rate, source, recorded_at").order("recorded_at", { ascending: false }).limit(20);
+  if (error) return [];
+  return presentFxRows((data ?? []) as Row[]);
 }
 
 async function studioCurrency() {
@@ -1770,15 +1886,30 @@ export async function saveWorkstream(user: SessionUser, input: { id: string; own
 }
 
 function hourlyRecord(user: SessionUser, row: HourlySheetRow) {
-  if (!row.workDate) throw new PortalError("Date is required.");
-  if (row.hours <= 0 || row.hours > 24) throw new PortalError("Hours must be greater than 0 and at most 24.");
+  if (row.hours < 0 || row.hours > 24) throw new PortalError("Hours Spent must be from 0 to 24.");
+  if (!row.workDate && !row.task && !row.project) throw new PortalError("Each row needs a project or a task.");
+  const day = (value: string) => value || null;
   return {
     user_id: user.id,
     role_name: user.roleName,
-    work_date: row.workDate,
+    sheet_no: row.sheetNo || 0,
     project_name: row.project.trim(),
+    sprint: row.sprint.trim(),
+    resource_name: row.resource.trim(),
+    task: (row.task || row.notes).trim(),
+    work_date: day(row.workDate),
     hours: row.hours,
-    notes: row.notes.trim(),
+    status: row.status.trim(),
+    company: row.company.trim(),
+    est_start: day(row.estStart),
+    est_end: day(row.estEnd),
+    estimated_hours: row.estimatedHours,
+    target_hours: row.targetHours,
+    actual_start: day(row.actualStart),
+    actual_end: day(row.actualEnd),
+    actual_hours: row.actualHours,
+    approval: row.approval.trim(),
+    notes: (row.task || row.notes).trim(),
   };
 }
 
@@ -1798,7 +1929,28 @@ export async function saveHourlySheet(user: SessionUser, rows: HourlySheetRow[])
 
 export async function saveHourlyEntry(user: SessionUser, input: HourlyEntry) {
   if (!canUseHourlyTracker(user)) throw new PortalError("You cannot update the hourly tracker.");
-  const payload = hourlyRecord(user, { workDate: input.workDate, project: input.project, hours: input.hours, notes: input.notes, role: "", person: "" });
+  const payload = hourlyRecord(user, {
+    sheetNo: input.sheetNo,
+    project: input.project,
+    sprint: input.sprint,
+    resource: input.resource,
+    task: input.task || input.notes,
+    workDate: input.workDate,
+    hours: input.hours,
+    status: input.status,
+    company: input.company,
+    estStart: input.estStart,
+    estEnd: input.estEnd,
+    estimatedHours: input.estimatedHours,
+    targetHours: input.targetHours,
+    actualStart: input.actualStart,
+    actualEnd: input.actualEnd,
+    actualHours: input.actualHours,
+    approval: input.approval,
+    notes: input.task || input.notes,
+    role: "",
+    person: input.resource,
+  });
   const supabase = await client();
   if (input.id) {
     const { data, error } = await supabase.from("hourly_entries").update(payload).eq("id", input.id).eq("user_id", user.id).select("id");

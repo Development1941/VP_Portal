@@ -1,7 +1,9 @@
 import Link from "next/link";
-import { ActionForm, Submit } from "@/components/common/forms";
 import { Badge, PageHeader, Stat } from "@/components/common/ui";
-import { deleteHourlyEntryAction, saveHourlyEntryAction, saveSowRecordAction, uploadHourlyTrackerAction, uploadSowSheetAction, uploadStatusSheetAction } from "@/app/actions";
+import { ResourceAllocation } from "@/components/dashboard/resource-allocation";
+import { HourlyEditRow, SowEditRow } from "@/components/dashboard/row-edit";
+import { SheetUpload } from "@/components/dashboard/sheet-upload";
+import { uploadHourlyTrackerAction, uploadSowSheetAction, uploadStatusSheetAction } from "@/app/actions";
 import { ProjectHealthList } from "@/components/projects/health-list";
 import { can } from "@/lib/access";
 import { addDays, startOfWeek, todayIso } from "@/lib/dates";
@@ -9,10 +11,10 @@ import { hoursLabel, money, prettyDate } from "@/lib/format";
 import { nameOf, projectOf, requirePage } from "@/lib/page";
 import { dues, isOverdue, projectEconomics } from "@/lib/reports";
 import { showCommercials } from "@/lib/commercial";
-import { canPublishStatus, extraStatusColumns, groupStatus, latestStatus, statusNeedsAttention, statusTone } from "@/lib/status-board";
-import { canUseHourlyTracker } from "@/lib/hourly-sheet";
+import { canPublishStatus, extraStatusColumns, groupStatus, latestStatus, statusIsSettled, statusNeedsAttention, statusTone } from "@/lib/status-board";
+import { canUseHourlyTracker, isResourceAllocation } from "@/lib/hourly-sheet";
 import { sowAttentionNote, sowNeedsAttention } from "@/lib/sow-board";
-import type { HourlyEntry, SowRecord } from "@/lib/types";
+import type { HourlyEntry } from "@/lib/types";
 
 export default async function DashboardPage() {
   const { user, data } = await requirePage(["dashboard.view"]);
@@ -40,17 +42,112 @@ export default async function DashboardPage() {
   const sowAttention = data.sowRecords.filter(sowNeedsAttention);
   const statusAttention = board.rows.filter((row) => statusNeedsAttention(row.status));
   const trackHours = canUseHourlyTracker(user);
-  const myHours = data.hourlyEntries.filter((entry) => entry.userId === user.id);
+  const myHours = data.hourlyEntries.filter((entry) => !isResourceAllocation(entry));
   const hourProjects = hourGroups(myHours);
+  const weekHourly = myHours.filter((entry) => entry.workDate >= weekStart && entry.workDate <= weekEnd).reduce((sum, entry) => sum + entry.hours, 0);
+  const loggedHours = weekHours || weekHourly;
+  const openItems = board.rows.filter((row) => row.status.trim() && !statusIsSettled(row.status)).length;
+  const sheetProjects = new Set(board.rows.map((row) => row.project).filter(Boolean)).size;
+  const attentionCount = statusAttention.length + sowAttention.length;
 
   return (
     <>
       <PageHeader eyebrow="Workspace" title="Dashboard" />
+      <section className="card" id="needs-attention">
+        <div className="card-head">
+          <h2>Needs attention</h2>
+        </div>
+        <div className="list">
+          {statusAttention.map((row) => (
+            <Link key={`${row.sheetNo}-${row.project}-${row.subItem}`} href="#project-status">
+              <span className="attention-item">
+                <strong>
+                  {row.project}
+                  {row.subItem ? ` · ${row.subItem}` : ""}
+                  {row.company ? ` · ${row.company}` : ""}
+                </strong>
+                <span className="attention-cause">{row.remarks.trim() || (row.status.toLowerCase().includes("pending") ? "Pending" : "Not started")}</span>
+              </span>
+              <Badge value={row.status.toLowerCase().includes("pending") ? "pending" : "not_started"} />
+            </Link>
+          ))}
+          {sowAttention.map((row) => (
+            <Link key={row.id} href="#sow-status">
+              <span className="attention-item">
+                <strong>
+                  {row.project}
+                  {row.company ? ` · ${row.company}` : ""}
+                  {row.sprint ? ` · ${row.sprint}` : ""}
+                </strong>
+                <span className="attention-cause">{row.changeRequest.trim() || sowAttentionNote(row)}</span>
+              </span>
+              <Badge value="addendum" />
+            </Link>
+          ))}
+          {mine.filter((entry) => entry.status === "rejected").map((entry) => (
+            <Link key={entry.id} href="/timesheets">
+              <span className="attention-item">
+                <strong>Returned timesheet · {projectOf(data, entry.projectId)?.name}</strong>
+                <span className="attention-cause">{entry.rejectionNote.trim() || "Returned for correction"}</span>
+              </span>
+              <Badge value="rejected" />
+            </Link>
+          ))}
+          {approvals.slice(0, 4).map((entry) => (
+            <Link key={entry.id} href="/timesheets">
+              <span className="attention-item">
+                <strong>{nameOf(data, entry.userId)} · {hoursLabel(entry.hours)} on {projectOf(data, entry.projectId)?.name}</strong>
+                <span className="attention-cause">Submitted and waiting for approval</span>
+              </span>
+              <Badge value="submitted" />
+            </Link>
+          ))}
+          {showCommercials
+            ? openDues.slice(0, 4).map((row) => (
+              <Link key={row.invoice.id} href={`/invoices/${row.invoice.id}`}>
+                <span className="attention-item">
+                  <strong>{row.invoice.number} · {money(row.amount, data.currency)}</strong>
+                  <span className="attention-cause">{isOverdue(row.invoice.dueDate, row.amount) ? `Overdue since ${prettyDate(row.invoice.dueDate)}` : `Due ${prettyDate(row.invoice.dueDate)}`}</span>
+                </span>
+                <Badge value={isOverdue(row.invoice.dueDate, row.amount) ? "overdue" : row.invoice.status} />
+              </Link>
+            ))
+            : null}
+          {milestones.slice(0, 4).map((item) => (
+            <Link key={item.id} href={`/projects/${item.projectId}`}>
+              <span className="attention-item">
+                <strong>{item.name}</strong>
+                <span className="attention-cause">Due {prettyDate(item.dueDate)}</span>
+              </span>
+              <Badge value={item.status} />
+            </Link>
+          ))}
+          {!statusAttention.length && !sowAttention.length && !returned && !approvals.length && !(showCommercials && openDues.length) && !milestones.length ? <p className="empty">No items require attention.</p> : null}
+        </div>
+      </section>
       <section className="stats">
-        <Stat label="My open tasks" value={String(myTasks.length)} note="Assigned to you" />
-        <Stat label="My hours" value={hoursLabel(weekHours)} note="Logged this week" />
-        {can(user, "timesheets.approve") ? <Stat label="Approvals" value={String(approvals.length)} note="Submitted and waiting" /> : <Stat label="Waiting on approval" value={String(waiting)} note={returned ? `${returned} returned` : "Submitted logs"} />}
-        {showCommercials && financial ? <Stat label="Pending dues" value={money(dueTotal, data.currency)} note={`${openDues.length} open invoice${openDues.length === 1 ? "" : "s"}`} /> : <Stat label="Projects" value={String(data.projects.length)} note="Currently visible" />}
+        {myTasks.length ? (
+          <Stat label="My open tasks" value={String(myTasks.length)} href="/work" detail="Tasks assigned to you that are not done yet." />
+        ) : (
+          <Stat label="Open items" value={String(openItems)} href="#project-status" detail={`${openItems} rows on the ${board.date ? prettyDate(board.date) : "latest"} status sheet are still underway. Delivered and completed rows are left out.`} />
+        )}
+        {loggedHours ? (
+          <Stat label="My hours" value={hoursLabel(loggedHours)} href={trackHours ? "#hourly-tracker" : "/timesheets"} detail="Hours logged this week on your own timesheet." />
+        ) : (
+          <Stat label="Needs attention" value={String(attentionCount)} href="#needs-attention" detail={`${statusAttention.length} status rows are Pending or Not started. ${sowAttention.length} SOW rows need an addendum.`} />
+        )}
+        {can(user, "timesheets.approve") && approvals.length ? (
+          <Stat label="Approvals" value={String(approvals.length)} href="/timesheets" detail="Timesheets that were submitted and are waiting for approval." />
+        ) : waiting ? (
+          <Stat label="Waiting on approval" value={String(waiting)} href="/timesheets" detail={returned ? `${waiting} submitted logs are waiting. ${returned} were returned.` : "Submitted logs waiting for approval."} />
+        ) : (
+          <Stat label="SOW" value={String(sowStatus.length)} href="#sow-status" detail={`${sowStatus.length} statements of work are on the SOW status list. ${sowBids.length} more rows are open bids under that list.`} />
+        )}
+        {showCommercials && financial ? (
+          <Stat label="Pending dues" value={money(dueTotal, data.currency)} href="/invoices" detail={`${openDues.length} open invoice${openDues.length === 1 ? "" : "s"} still have an amount due.`} />
+        ) : (
+          <Stat label="Projects" value={String(data.projects.length || sheetProjects)} href={data.projects.length ? "/projects" : "#project-status"} detail={data.projects.length ? "Projects currently visible in the project register." : `${sheetProjects} distinct projects are named on the latest status sheet.`} />
+        )}
       </section>
       {showCommercials && can(user, "reports.financial") ? (
         <section className="stats">
@@ -67,13 +164,13 @@ export default async function DashboardPage() {
             <span className="muted">Projects and their items{board.date ? ` · ${prettyDate(board.date)}` : ""}</span>
           </div>
           {publishStatus ? (
-            <ActionForm action={uploadStatusSheetAction} className="status-upload">
-              <label className="file-field">
-                Excel or CSV
-                <input type="file" name="sheet" accept=".csv,.xlsx,.xls" required />
-              </label>
-              <Submit>Upload sheet</Submit>
-            </ActionForm>
+            <SheetUpload
+              action={uploadStatusSheetAction}
+              button="Upload sheet"
+              title="Upload project status"
+              hint="Use an Excel or CSV file. Uploading replaces the current status history."
+              field="sheet"
+            />
           ) : null}
         </div>
         {groups.length ? (
@@ -86,7 +183,6 @@ export default async function DashboardPage() {
                   <th>Item</th>
                   <th>Status</th>
                   <th>Task / Remarks</th>
-                  <th>Date</th>
                   {extras.map((column) => (
                     <th key={column}>{column}</th>
                   ))}
@@ -111,7 +207,6 @@ export default async function DashboardPage() {
                         <span className={`badge ${statusTone(row.status)}`}>{row.status || "—"}</span>
                       </td>
                       <td className="remarks">{row.remarks || "—"}</td>
-                      <td className="num">{prettyDate(row.statusDate)}</td>
                       {extras.map((column) => (
                         <td key={column}>{row.fields?.[column] || "—"}</td>
                       ))}
@@ -132,13 +227,13 @@ export default async function DashboardPage() {
             <span className="muted">Signed statements of work, open bids, and addenda</span>
           </div>
           {publishStatus ? (
-            <ActionForm action={uploadSowSheetAction} className="status-upload">
-              <label className="file-field">
-                Excel or CSV
-                <input type="file" name="sow" accept=".csv,.xlsx,.xls" required />
-              </label>
-              <Submit>Upload SOW</Submit>
-            </ActionForm>
+            <SheetUpload
+              action={uploadSowSheetAction}
+              button="Upload SOW"
+              title="Upload SOW"
+              hint="Use an Excel or CSV file. Uploading replaces the SOW rows in that file."
+              field="sow"
+            />
           ) : null}
         </div>
         {sowStatus.length ? (
@@ -153,28 +248,25 @@ export default async function DashboardPage() {
                   <th>Signed</th>
                   <th>Signed on</th>
                   <th>CR / Addendum</th>
-                  <th>Company</th>
                   {publishStatus ? <th>Edit</th> : null}
                 </tr>
               </thead>
               <tbody>
-                {sowStatus.map((row) => (
-                  <tr key={row.id}>
-                    <td className="num">{row.sheetNo || "—"}</td>
-                    <td>{row.project}</td>
-                    <td>{row.sprint || "—"}</td>
-                    <td>{sowLink(row.link)}</td>
-                    <td>{row.signature ? <span className={`badge ${row.signature.toLowerCase() === "signed" ? "ok" : "warn"}`}>{row.signature}</span> : "—"}</td>
-                    <td className="num">{row.signedOn || "—"}</td>
-                    <td className="remarks">{row.changeRequest || "—"}</td>
-                    <td>{row.company || "—"}</td>
-                    {publishStatus ? (
-                      <td>
-                        <SowEdit row={row} />
-                      </td>
-                    ) : null}
-                  </tr>
-                ))}
+                {sowStatus.map((row) =>
+                  publishStatus ? (
+                    <SowEditRow key={row.id} row={row} />
+                  ) : (
+                    <tr key={row.id}>
+                      <td className="num">{row.sheetNo || "—"}</td>
+                      <td>{row.project}</td>
+                      <td>{row.sprint || "—"}</td>
+                      <td>{sowLink(row.link)}</td>
+                      <td>{row.signature ? <span className={`badge ${row.signature.toLowerCase() === "signed" ? "ok" : "warn"}`}>{row.signature}</span> : "—"}</td>
+                      <td className="num">{row.signedOn || "—"}</td>
+                      <td className="remarks">{row.changeRequest || "—"}</td>
+                    </tr>
+                  ),
+                )}
               </tbody>
             </table>
           </div>
@@ -198,19 +290,18 @@ export default async function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sowBids.map((row) => (
-                    <tr key={row.id}>
-                      <td className="num">{row.sheetNo || "—"}</td>
-                      <td>{row.project}</td>
-                      <td>{sowLink(row.link)}</td>
-                      <td>{row.company || "—"}</td>
-                      {publishStatus ? (
-                        <td>
-                          <SowEdit row={row} />
-                        </td>
-                      ) : null}
-                    </tr>
-                  ))}
+                  {sowBids.map((row) =>
+                    publishStatus ? (
+                      <SowEditRow key={row.id} row={row} />
+                    ) : (
+                      <tr key={row.id}>
+                        <td className="num">{row.sheetNo || "—"}</td>
+                        <td>{row.project}</td>
+                        <td>{sowLink(row.link)}</td>
+                        <td>{row.company || "—"}</td>
+                      </tr>
+                    ),
+                  )}
                 </tbody>
               </table>
             </div>
@@ -226,65 +317,7 @@ export default async function DashboardPage() {
           <ProjectHealthList projects={data.projects} milestones={data.milestones} timesheets={data.timesheets} />
         </section>
       ) : null}
-      <section className="card">
-          <div className="card-head">
-            <h2>Needs attention</h2>
-          </div>
-          <div className="list">
-            {statusAttention.map((row) => (
-              <Link key={`${row.sheetNo}-${row.project}-${row.subItem}`} href="#project-status">
-                <span>
-                  {row.project}
-                  {row.subItem ? ` · ${row.subItem}` : ""}
-                  {row.company ? ` · ${row.company}` : ""}
-                </span>
-                <Badge value={row.status.toLowerCase().includes("pending") ? "pending" : "not_started"} />
-              </Link>
-            ))}
-            {sowAttention.map((row) => (
-              <Link key={row.id} href="#sow-status">
-                <span>
-                  {row.project}
-                  {row.company ? ` · ${row.company}` : ""} · {sowAttentionNote(row)}
-                </span>
-                <Badge value={row.changeRequest.trim() ? "addendum" : "pending"} />
-              </Link>
-            ))}
-            {returned ? (
-              <Link href="/timesheets">
-                <span>Returned timesheets</span>
-                <Badge value="rejected" />
-              </Link>
-            ) : null}
-            {approvals.slice(0, 4).map((entry) => (
-              <Link key={entry.id} href="/timesheets">
-                <span>
-                  {nameOf(data, entry.userId)} · {hoursLabel(entry.hours)} on {projectOf(data, entry.projectId)?.name}
-                </span>
-                <Badge value="submitted" />
-              </Link>
-            ))}
-            {showCommercials
-              ? openDues.slice(0, 4).map((row) => (
-                <Link key={row.invoice.id} href={`/invoices/${row.invoice.id}`}>
-                  <span>
-                    {row.invoice.number} · {money(row.amount, data.currency)}
-                  </span>
-                  <Badge value={isOverdue(row.invoice.dueDate, row.amount) ? "overdue" : row.invoice.status} />
-                </Link>
-              ))
-              : null}
-            {milestones.slice(0, 4).map((item) => (
-              <Link key={item.id} href={`/projects/${item.projectId}`}>
-                <span>
-                  {item.name} · due {prettyDate(item.dueDate)}
-                </span>
-                <Badge value={item.status} />
-              </Link>
-            ))}
-            {!statusAttention.length && !sowAttention.length && !returned && !approvals.length && !(showCommercials && openDues.length) && !milestones.length ? <p className="empty">No items require attention.</p> : null}
-          </div>
-        </section>
+      {trackHours ? <ResourceAllocation rows={data.hourlyEntries} editable linked /> : null}
       {trackHours ? (
         <section className="card status-board" id="hourly-tracker">
           <div className="card-head">
@@ -292,13 +325,13 @@ export default async function DashboardPage() {
               <h2>Hourly tracker</h2>
               <span className="muted">Your role · {user.roleName}</span>
             </div>
-            <ActionForm action={uploadHourlyTrackerAction} className="status-upload">
-              <label className="file-field">
-                Excel or CSV
-                <input type="file" name="sheet" accept=".csv,.xlsx,.xls" required />
-              </label>
-              <Submit>Upload my role</Submit>
-            </ActionForm>
+            <SheetUpload
+              action={uploadHourlyTrackerAction}
+              button="Upload my role"
+              title="Upload hourly tracker"
+              hint="Use the resource utilization sheet. Project, Sprint, Resource, Task, Date, Hours Spent, Status, and Company are read from the file. An October plan sheet also reads the estimate and actual columns."
+              field="sheet"
+            />
           </div>
           {hourProjects.length ? (
             <div className="hour-projects">
@@ -312,20 +345,21 @@ export default async function DashboardPage() {
                     <table>
                       <thead>
                         <tr>
+                          <th>S.no</th>
+                          <th>Project</th>
+                          <th>Sprint</th>
+                          <th>Resource</th>
+                          <th>Task</th>
                           <th>Date</th>
-                          <th className="num">Hours</th>
-                          <th>Notes</th>
+                          <th className="num">Hours Spent</th>
+                          <th>Status</th>
+                          <th>Company</th>
                           <th>Edit</th>
                         </tr>
                       </thead>
                       <tbody>
                         {group.rows.map((row) => (
-                          <tr key={row.id}>
-                            <td>{prettyDate(row.workDate)}</td>
-                            <td className="num">{hoursLabel(row.hours)}</td>
-                            <td className="remarks">{row.notes || "—"}</td>
-                            <td><HourlyEdit row={row} /></td>
-                          </tr>
+                          <HourlyEditRow key={row.id} row={row} plan={false} />
                         ))}
                       </tbody>
                     </table>
@@ -354,41 +388,9 @@ function hourGroups(rows: HourlyEntry[]) {
     .map(([name, items]) => ({
       name,
       hours: items.reduce((sum, row) => sum + row.hours, 0),
-      rows: items.sort((a, b) => b.workDate.localeCompare(a.workDate)),
+      rows: items.sort((a, b) => a.sheetNo - b.sheetNo || a.workDate.localeCompare(b.workDate)),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function HourlyEdit({ row }: { row: HourlyEntry }) {
-  return (
-    <details className="sow-edit">
-      <summary>Edit</summary>
-      <ActionForm action={saveHourlyEntryAction} className="sow-edit-form">
-        <input type="hidden" name="id" value={row.id} />
-        <label className="field">
-          <span>Date</span>
-          <input type="date" name="workDate" defaultValue={row.workDate} required />
-        </label>
-        <label className="field">
-          <span>Project</span>
-          <input name="project" defaultValue={row.project} />
-        </label>
-        <label className="field">
-          <span>Hours</span>
-          <input name="hours" type="number" min="0.25" max="24" step="0.25" defaultValue={row.hours} required />
-        </label>
-        <label className="field">
-          <span>Notes</span>
-          <input name="notes" defaultValue={row.notes} />
-        </label>
-        <Submit>Save</Submit>
-      </ActionForm>
-      <ActionForm action={deleteHourlyEntryAction}>
-        <input type="hidden" name="id" value={row.id} />
-        <Submit variant="ghost">Remove</Submit>
-      </ActionForm>
-    </details>
-  );
 }
 
 function sowLink(value: string) {
@@ -403,41 +405,3 @@ function sowLink(value: string) {
   return value;
 }
 
-function SowEdit({ row }: { row: SowRecord }) {
-  return (
-    <details className="sow-edit">
-      <summary>Edit</summary>
-      <ActionForm action={saveSowRecordAction} className="sow-edit-form">
-        <input type="hidden" name="id" value={row.id} />
-        <input type="hidden" name="sheetNo" value={row.sheetNo} />
-        <input type="hidden" name="project" value={row.project} />
-        <input type="hidden" name="company" value={row.company} />
-        <label className="field">
-          <span>Sprint</span>
-          <input name="sprint" defaultValue={row.sprint} />
-        </label>
-        <label className="field">
-          <span>Link</span>
-          <input name="link" defaultValue={row.link} />
-        </label>
-        <label className="field">
-          <span>Signed</span>
-          <select name="signature" defaultValue={row.signature}>
-            <option value="">Not set</option>
-            <option>Signed</option>
-            <option>Unsigned</option>
-          </select>
-        </label>
-        <label className="field">
-          <span>Signed on</span>
-          <input name="signedOn" defaultValue={row.signedOn} />
-        </label>
-        <label className="field">
-          <span>CR / Addendum</span>
-          <textarea name="changeRequest" rows={3} defaultValue={row.changeRequest} />
-        </label>
-        <Submit>Save row</Submit>
-      </ActionForm>
-    </details>
-  );
-}

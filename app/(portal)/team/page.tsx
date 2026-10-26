@@ -1,3 +1,4 @@
+import { Pencil } from "lucide-react";
 import { saveStaffAction } from "@/app/actions";
 import { ActionForm, Submit } from "@/components/common/forms";
 import { Badge, Denied, PageHeader } from "@/components/common/ui";
@@ -31,7 +32,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
                   <td>{person.title}</td>
                   <td><Badge value={person.status} /></td>
                   {showCost ? <td className="num">{person.hourlyCost ? money(person.hourlyCost, data.currency) : "—"}</td> : null}
-                  <td>{manage ? <a href={`?edit=${person.id}`}>Edit</a> : null}</td>
+                  <td>{manage ? <a className="edit-ico" href={`?edit=${person.id}`} aria-label={`Edit ${person.fullName}`}><Pencil strokeWidth={1.75} aria-hidden /></a> : null}</td>
                 </tr>
               ))}
             </tbody>

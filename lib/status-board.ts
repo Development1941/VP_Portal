@@ -99,6 +99,11 @@ export function statusNeedsAttention(status: string) {
   return value === "pending" || value.includes("not started");
 }
 
+export function statusIsSettled(status: string) {
+  const value = status.toLowerCase();
+  return value.includes("complete") || value.includes("closed") || value.includes("delivered");
+}
+
 export function statusTone(status: string) {
   const value = status.toLowerCase();
   if (value.includes("block")) return "bad";

@@ -1163,17 +1163,55 @@ create table if not exists public.hourly_entries (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
   role_name text not null default '',
-  work_date date not null,
+  sheet_no integer not null default 0,
   project_name text not null default '',
-  hours numeric not null,
+  sprint text not null default '',
+  resource_name text not null default '',
+  task text not null default '',
+  work_date date,
+  hours numeric not null default 0,
+  status text not null default '',
+  company text not null default '',
+  est_start date,
+  est_end date,
+  estimated_hours numeric,
+  target_hours numeric,
+  actual_start date,
+  actual_end date,
+  actual_hours numeric,
+  approval text not null default '',
   notes text not null default ''
 );
+
+alter table public.hourly_entries add column if not exists sheet_no integer not null default 0;
+alter table public.hourly_entries add column if not exists sprint text not null default '';
+alter table public.hourly_entries add column if not exists resource_name text not null default '';
+alter table public.hourly_entries add column if not exists task text not null default '';
+alter table public.hourly_entries add column if not exists status text not null default '';
+alter table public.hourly_entries add column if not exists company text not null default '';
+alter table public.hourly_entries add column if not exists est_start date;
+alter table public.hourly_entries add column if not exists est_end date;
+alter table public.hourly_entries add column if not exists estimated_hours numeric;
+alter table public.hourly_entries add column if not exists target_hours numeric;
+alter table public.hourly_entries add column if not exists actual_start date;
+alter table public.hourly_entries add column if not exists actual_end date;
+alter table public.hourly_entries add column if not exists actual_hours numeric;
+alter table public.hourly_entries add column if not exists approval text not null default '';
+alter table public.hourly_entries alter column work_date drop not null;
 
 alter table public.hourly_entries enable row level security;
 
 drop policy if exists hourly_entries_read on public.hourly_entries;
 create policy hourly_entries_read on public.hourly_entries for select to authenticated
-  using (user_id = auth.uid() or public.has_permission('timesheets.view_all') or public.has_permission('timesheets.approve'));
+  using (
+    user_id = auth.uid()
+    or public.has_permission('timesheets.view_all')
+    or public.has_permission('timesheets.approve')
+    or public.has_permission('projects.view')
+    or public.has_permission('projects.view_all')
+    or public.has_permission('tasks.view')
+    or public.has_permission('tasks.manage')
+  );
 
 drop policy if exists hourly_entries_insert on public.hourly_entries;
 create policy hourly_entries_insert on public.hourly_entries for insert to authenticated
@@ -1242,5 +1280,54 @@ with ranked as (
 delete from public.timesheets where id in (select id from ranked where n > 1);
 
 create unique index if not exists timesheets_user_day_key on public.timesheets (user_id, work_date);
+
+create index if not exists hourly_entries_user_sheet_idx on public.hourly_entries (user_id, sheet_no);
+create index if not exists hourly_entries_sheet_idx on public.hourly_entries (sheet_no);
+create index if not exists audit_logs_created_idx on public.audit_logs (created_at desc);
+create index if not exists profiles_role_idx on public.profiles (role_id);
+
+create or replace function public.portal_bundle(
+  p_grants boolean,
+  p_rates boolean,
+  p_money boolean,
+  p_payments boolean,
+  p_audit boolean,
+  p_costs boolean
+) returns jsonb
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'roles', coalesce((select jsonb_agg(to_jsonb(t) order by t.name) from public.roles t), '[]'::jsonb),
+    'grants', case when p_grants then coalesce((select jsonb_agg(jsonb_build_object('role_id', g.role_id, 'permission_key', g.permission_key)) from public.role_permissions g), '[]'::jsonb) else '[]'::jsonb end,
+    'profiles', coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'full_name', p.full_name, 'email', p.email, 'title', p.title, 'phone', p.phone, 'role_id', p.role_id, 'status', p.status)) from public.profiles p), '[]'::jsonb),
+    'clients', coalesce((select jsonb_agg(to_jsonb(t) order by t.company) from public.clients t), '[]'::jsonb),
+    'projects', coalesce((select jsonb_agg(to_jsonb(t) order by t.name) from public.projects t), '[]'::jsonb),
+    'members', coalesce((select jsonb_agg(jsonb_build_object('project_id', m.project_id, 'user_id', m.user_id, 'member_role', m.member_role, 'bill_rate', m.bill_rate)) from public.project_members m), '[]'::jsonb),
+    'milestones', coalesce((select jsonb_agg(to_jsonb(t)) from public.milestones t), '[]'::jsonb),
+    'features', coalesce((select jsonb_agg(to_jsonb(t)) from public.features t), '[]'::jsonb),
+    'tasks', coalesce((select jsonb_agg(to_jsonb(t)) from public.tasks t), '[]'::jsonb),
+    'timesheets', coalesce((select jsonb_agg(to_jsonb(t)) from public.timesheets t), '[]'::jsonb),
+    'rates', case when p_rates then coalesce((select jsonb_agg(to_jsonb(t)) from public.rates t), '[]'::jsonb) else '[]'::jsonb end,
+    'invoices', case when p_money then coalesce((select jsonb_agg(to_jsonb(t) order by t.issue_date desc) from public.invoices t), '[]'::jsonb) else '[]'::jsonb end,
+    'lines', case when p_money then coalesce((select jsonb_agg(to_jsonb(t)) from public.invoice_lines t), '[]'::jsonb) else '[]'::jsonb end,
+    'payments', case when p_payments then coalesce((select jsonb_agg(to_jsonb(t) order by t.created_at desc) from public.payments t), '[]'::jsonb) else '[]'::jsonb end,
+    'notifications', coalesce((select jsonb_agg(to_jsonb(n) order by n.created_at desc) from (select * from public.notifications where user_id = auth.uid() order by created_at desc limit 40) n), '[]'::jsonb),
+    'audit', case when p_audit then coalesce((select jsonb_agg(to_jsonb(a) order by a.created_at desc) from (select id, actor_id, action, entity, entity_id, summary, created_at from public.audit_logs order by created_at desc limit 80) a), '[]'::jsonb) else '[]'::jsonb end,
+    'costs', case when p_costs then coalesce((select jsonb_agg(jsonb_build_object('id', c.id, 'hourly_cost', c.hourly_cost)) from public.staff_costs() c), '[]'::jsonb) else '[]'::jsonb end,
+    'escalations', coalesce((select jsonb_agg(to_jsonb(t) order by t.created_at desc) from public.escalations t), '[]'::jsonb),
+    'files', coalesce((select jsonb_agg(to_jsonb(t) order by t.created_at desc) from public.project_files t), '[]'::jsonb),
+    'workstreams', coalesce((select jsonb_agg(to_jsonb(t) order by t.name) from public.workstreams t), '[]'::jsonb),
+    'studio', (select to_jsonb(s) from public.studio_settings s where s.id = 1),
+    'fx', coalesce((select jsonb_agg(to_jsonb(f) order by f.recorded_at desc) from (select id, from_currency, to_currency, rate, source, recorded_at from public.fx_rates order by recorded_at desc limit 20) f), '[]'::jsonb),
+    'status', coalesce((select jsonb_agg(jsonb_build_object('sheet_no', s.sheet_no, 'project_name', s.project_name, 'sub_item', s.sub_item, 'status', s.status, 'remarks', s.remarks, 'status_date', s.status_date, 'sheet_label', s.sheet_label, 'company', s.company, 'fields', s.fields) order by s.status_date desc, s.sheet_no) from public.status_updates s), '[]'::jsonb),
+    'sow', coalesce((select jsonb_agg(jsonb_build_object('id', s.id, 'kind', s.kind, 'sheet_no', s.sheet_no, 'project_name', s.project_name, 'sprint', s.sprint, 'link', s.link, 'signature', s.signature, 'signed_on', s.signed_on, 'change_request', s.change_request, 'company', s.company) order by s.sheet_no) from public.sow_records s), '[]'::jsonb),
+    'hourly', coalesce((select jsonb_agg(jsonb_build_object('id', h.id, 'user_id', h.user_id, 'role_name', h.role_name, 'work_date', h.work_date, 'project_name', h.project_name, 'hours', h.hours, 'notes', h.notes, 'sheet_no', h.sheet_no, 'sprint', h.sprint, 'resource_name', h.resource_name, 'task', h.task, 'status', h.status, 'company', h.company, 'est_start', h.est_start, 'est_end', h.est_end, 'estimated_hours', h.estimated_hours, 'target_hours', h.target_hours, 'actual_start', h.actual_start, 'actual_end', h.actual_end, 'actual_hours', h.actual_hours, 'approval', h.approval) order by h.sheet_no) from public.hourly_entries h), '[]'::jsonb)
+  );
+$$;
+
+grant execute on function public.portal_bundle(boolean, boolean, boolean, boolean, boolean, boolean) to authenticated;
 
 notify pgrst, 'reload schema';

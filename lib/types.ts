@@ -282,9 +282,23 @@ export type HourlyEntry = {
   id: string;
   userId: string;
   roleName: string;
-  workDate: string;
+  sheetNo: number;
   project: string;
+  sprint: string;
+  resource: string;
+  task: string;
+  workDate: string;
   hours: number;
+  status: string;
+  company: string;
+  estStart: string;
+  estEnd: string;
+  estimatedHours: number | null;
+  targetHours: number | null;
+  actualStart: string;
+  actualEnd: string;
+  actualHours: number | null;
+  approval: string;
   notes: string;
 };
 

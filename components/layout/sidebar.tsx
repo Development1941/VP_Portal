@@ -1,7 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useState } from "react";
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { PanelLeftClose } from "lucide-react";
 
 const STORAGE_KEY = "vp-sidebar";
 
@@ -16,6 +16,11 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
   useLayoutEffect(() => {
     document.querySelector(".app")?.classList.toggle("sidebar-collapsed", collapsed);
   }, [collapsed]);
+
+  useLayoutEffect(() => {
+    const frame = requestAnimationFrame(() => document.querySelector(".app")?.classList.add("sidebar-ready"));
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   function toggle() {
     setCollapsed((current) => {
@@ -34,7 +39,7 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         onClick={toggle}
       >
-        {collapsed ? <PanelLeftOpen strokeWidth={1.75} aria-hidden /> : <PanelLeftClose strokeWidth={1.75} aria-hidden />}
+        <PanelLeftClose strokeWidth={1.75} aria-hidden />
       </button>
       {children}
     </aside>

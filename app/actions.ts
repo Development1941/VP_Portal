@@ -618,14 +618,34 @@ export async function uploadHourlyTrackerAction(_prev: FormState, form: FormData
 export async function saveHourlyEntryAction(_prev: FormState, form: FormData): Promise<FormState> {
   return run(async () => {
     const user = await actor();
+    const optionalNum = (key: string) => {
+      const raw = str(form, key);
+      if (!raw) return null;
+      const value = Number(raw);
+      return Number.isFinite(value) ? value : null;
+    };
     const input: HourlyEntry = {
       id: str(form, "id"),
       userId: user.id,
       roleName: user.roleName,
-      workDate: str(form, "workDate"),
+      sheetNo: num(form, "sheetNo"),
       project: str(form, "project"),
-      hours: num(form, "hours"),
-      notes: str(form, "notes"),
+      sprint: str(form, "sprint"),
+      resource: str(form, "resource"),
+      task: str(form, "task"),
+      workDate: str(form, "actualStart") || str(form, "workDate") || str(form, "estStart"),
+      hours: optionalNum("actualHours") ?? num(form, "hours"),
+      status: str(form, "status"),
+      company: str(form, "company"),
+      estStart: str(form, "estStart"),
+      estEnd: str(form, "estEnd"),
+      estimatedHours: optionalNum("estimatedHours"),
+      targetHours: optionalNum("targetHours"),
+      actualStart: str(form, "actualStart"),
+      actualEnd: str(form, "actualEnd"),
+      actualHours: optionalNum("actualHours"),
+      approval: str(form, "approval"),
+      notes: str(form, "task"),
     };
     await db().saveHourlyEntry(user, input);
   }, "Hourly row saved.");

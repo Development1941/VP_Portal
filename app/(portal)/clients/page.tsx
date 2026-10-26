@@ -1,3 +1,4 @@
+import { Pencil } from "lucide-react";
 import { saveClientAction } from "@/app/actions";
 import { ActionForm, Submit } from "@/components/common/forms";
 import { Badge, Denied, PageHeader } from "@/components/common/ui";
@@ -28,7 +29,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
                 <td>{client.name}<div className="muted">{client.email}</div></td>
                 <td>{client.billingEmail}<div className="muted">{client.taxId}</div></td>
                 <td><Badge value={client.status} /></td>
-                <td>{can(user, "clients.manage") ? <a href={`?edit=${client.id}`}>Edit</a> : null}</td>
+                <td>{can(user, "clients.manage") ? <a className="edit-ico" href={`?edit=${client.id}`} aria-label={`Edit ${client.company}`}><Pencil strokeWidth={1.75} aria-hidden /></a> : null}</td>
               </tr>
             ))}
           </tbody>
