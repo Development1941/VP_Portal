@@ -3,22 +3,21 @@ import { notFound } from "next/navigation";
 import { finaliseSowAction, saveSowAction } from "@/app/actions";
 import { ActionForm, Submit } from "@/components/common/forms";
 import { Badge, Denied, PageHeader } from "@/components/common/ui";
-import { can, canSeeIntake } from "@/lib/access";
 import { showCommercials } from "@/lib/commercial";
 import { APPROVAL_STATUSES, BILLING_TERMS, PAYMENT_STATUSES, hoursConsumed } from "@/lib/delivery";
 import { hoursLabel, money } from "@/lib/format";
-import { clientOf, nameOf, requirePage } from "@/lib/page";
+import { clientOf, nameOf, requireTab } from "@/lib/page";
 
 export default async function SowAdminPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { user, data, allowed } = await requirePage(["projects.view", "projects.view_all", "projects.manage", "projects.intake"]);
-  if (!allowed || !canSeeIntake(user)) return <Denied title="SOW finalisation" />;
+  const { data, allowed } = await requireTab("sowManagement");
+  if (!allowed) return <Denied title="SOW finalisation" />;
   const project = data.projects.find((item) => item.id === id);
   if (!project) notFound();
   const consumed = hoursConsumed(project.id, data.timesheets, data.tasks);
   const balance = project.estimatedHours - consumed;
   const people = data.users.filter((person) => person.status === "active");
-  const manage = can(user, "projects.manage") || can(user, "projects.view_all");
+  const manage = true;
 
   return (
     <>
@@ -125,7 +124,7 @@ export default async function SowAdminPage({ params }: { params: Promise<{ id: s
       {manage ? (
         <section className="card">
           {project.sowStage === "finalised" ? (
-            <p>SOW already finalised. <Link href="/resources">Open resource allocation</Link></p>
+            <p>SOW already finalised. <Link href="/utilization">Open resource management</Link></p>
           ) : (
             <ActionForm action={finaliseSowAction}>
               <input type="hidden" name="projectId" value={project.id} />

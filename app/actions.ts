@@ -9,10 +9,11 @@ import { REQUIREMENT_SOURCES, sowDefaults } from "@/lib/delivery";
 import { prettyDate } from "@/lib/format";
 import { asPermissions, list, num, str, type FormState, PortalError } from "@/lib/form";
 import { getSession, signIn, signOut } from "@/lib/session";
-import { parseHourlySheet } from "@/lib/hourly-sheet";
+import { parseHourlySheetReport } from "@/lib/hourly-sheet";
+import { formatRowErrors } from "@/lib/pmd-flow";
 import { parseStatusSheet } from "@/lib/status-sheet";
 import { parseSowSheet } from "@/lib/sow-sheet";
-import type { HourlyEntry, SowRecord } from "@/lib/types";
+import type { ChecklistItem, HourlyEntry, SowRecord, StatusUpdate } from "@/lib/types";
 import type { Client, Escalation, Feature, Milestone, Payment, Project, RateCard, Role, Task, Timesheet, Workstream } from "@/lib/types";
 
 function choice<T extends string>(form: FormData, key: string, options: readonly T[], fallback: T): T {
@@ -40,6 +41,26 @@ async function run(work: () => Promise<void | string>, ok = "Saved."): Promise<F
   }
 }
 
+function appendMessage(result: { added: number; skipped: number; updated?: number }, noun: string, errors = "") {
+  const parts = [`Added ${result.added} ${noun}${result.added === 1 ? "" : "s"}.`];
+  if (result.updated) parts.push(`Updated ${result.updated} existing ${result.updated === 1 ? "row" : "rows"}.`);
+  if (result.skipped > 0) parts.push(`${result.skipped} matching ${result.skipped === 1 ? "row was" : "rows were"} already there and left unchanged.`);
+  return `${parts.join(" ")}${errors}`;
+}
+
+async function sheetFile(form: FormData, key: string) {
+  const file = filesOf(form, key)[0];
+  if (!file) throw new PortalError("Choose a CSV or Excel file.");
+  if (file.size > 4 * 1024 * 1024) throw new PortalError("That file is larger than 4 MB.");
+  return { bytes: Buffer.from(await file.arrayBuffer()), name: file.name };
+}
+
+function hourlyReport(file: { bytes: Buffer; name: string }) {
+  const report = parseHourlySheetReport(file.bytes, file.name);
+  if (!report.rows.length) throw new PortalError(`No valid rows were found.${formatRowErrors(report.errors)}`);
+  return report;
+}
+
 async function actor() {
   const user = await getSession();
   if (!user) throw new PortalError("Your session expired. Sign in again.");
@@ -52,6 +73,7 @@ export async function loginAction(_prev: FormState, form: FormData): Promise<For
     owner: ["owner@embee.local", "demo123"],
     manager: ["manav@embee.local", "demo123"],
     scrum: ["sm@embee.local", "demo123"],
+    yuvraj: ["yuvraj@embee.local", "demo123"],
     client: ["rakhee@embee.local", "demo123"],
     brian: ["brian@embee.local", "demo123"],
     member: ["ishaan@embee.local", "demo123"],
@@ -569,7 +591,7 @@ export async function finaliseSowAction(_prev: FormState, form: FormData): Promi
     throw error;
   }
   revalidatePath("/", "layout");
-  redirect("/resources");
+  redirect("/utilization");
 }
 
 export async function activateProjectAction(_prev: FormState, form: FormData): Promise<FormState> {
@@ -606,24 +628,18 @@ export async function saveDeliverySheetAction(_prev: FormState, form: FormData) 
 export async function uploadAllocationAction(_prev: FormState, form: FormData): Promise<FormState> {
   return run(async () => {
     const user = await actor();
-    const file = filesOf(form, "sheet")[0];
-    if (!file) throw new PortalError("Choose a CSV or Excel file.");
-    if (file.size > 4 * 1024 * 1024) throw new PortalError("That file is larger than 4 MB.");
-    const rows = parseHourlySheet(Buffer.from(await file.arrayBuffer()), file.name);
-    const count = await db().saveAllocationSheet(user, rows);
-    return `Saved ${count} allocation ${count === 1 ? "row" : "rows"}.`;
+    const report = hourlyReport(await sheetFile(form, "sheet"));
+    const result = await db().saveAllocationSheet(user, report.rows);
+    return appendMessage(result, "allocation row", formatRowErrors(report.errors));
   });
 }
 
 export async function uploadHourlyTrackerAction(_prev: FormState, form: FormData): Promise<FormState> {
   return run(async () => {
     const user = await actor();
-    const file = filesOf(form, "sheet")[0];
-    if (!file) throw new PortalError("Choose an Excel or CSV file.");
-    if (file.size > 4 * 1024 * 1024) throw new PortalError("That file is larger than 4 MB.");
-    const rows = parseHourlySheet(Buffer.from(await file.arrayBuffer()), file.name);
-    const count = await db().saveHourlySheet(user, rows);
-    return `Saved ${count} ${count === 1 ? "row" : "rows"} for ${user.roleName}.`;
+    const report = hourlyReport(await sheetFile(form, "sheet"));
+    const result = await db().saveHourlySheet(user, report.rows);
+    return appendMessage(result, "hourly row", formatRowErrors(report.errors));
   });
 }
 
@@ -658,39 +674,102 @@ export async function saveHourlyEntryAction(_prev: FormState, form: FormData): P
       actualHours: optionalNum("actualHours"),
       approval: str(form, "approval"),
       notes: str(form, "task"),
+      blocker: str(form, "blocker"),
     };
     await db().saveHourlyEntry(user, input);
-  }, "Hourly row saved.");
+  }, "Row saved.");
 }
 
 export async function deleteHourlyEntryAction(_prev: FormState, form: FormData): Promise<FormState> {
   return run(async () => {
     const user = await actor();
     await db().deleteHourlyEntry(user, str(form, "id"));
-  }, "Hourly row removed.");
+  }, "Row removed.");
 }
 
 export async function uploadStatusSheetAction(_prev: FormState, form: FormData): Promise<FormState> {
   return run(async () => {
     const user = await actor();
-    const file = filesOf(form, "sheet")[0];
-    if (!file) throw new PortalError("Choose an Excel or CSV file.");
-    if (file.size > 4 * 1024 * 1024) throw new PortalError("That file is larger than 4 MB.");
-    const rows = parseStatusSheet(Buffer.from(await file.arrayBuffer()), file.name);
-    const count = await db().saveStatusSheet(user, rows);
-    return `Replaced the status history with ${count} ${count === 1 ? "row" : "rows"}.`;
+    const file = await sheetFile(form, "sheet");
+    const rows = parseStatusSheet(file.bytes, file.name);
+    const result = await db().saveStatusSheet(user, rows);
+    return appendMessage(result, "status row");
   });
+}
+
+export async function saveStatusEntryAction(_prev: FormState, form: FormData): Promise<FormState> {
+  return run(async () => {
+    const user = await actor();
+    const input: StatusUpdate = {
+      id: str(form, "id"),
+      sheetNo: num(form, "sheetNo"),
+      project: str(form, "project"),
+      subItem: str(form, "subItem"),
+      status: str(form, "status"),
+      remarks: String(form.get("remarks") ?? "").trim(),
+      statusDate: str(form, "statusDate"),
+      company: str(form, "company"),
+    };
+    await db().saveStatusEntry(user, input);
+  }, "Status row saved.");
+}
+
+export async function deleteStatusEntryAction(_prev: FormState, form: FormData): Promise<FormState> {
+  return run(async () => {
+    const user = await actor();
+    await db().deleteStatusEntry(user, str(form, "id"));
+  }, "Status row removed.");
 }
 
 export async function uploadSowSheetAction(_prev: FormState, form: FormData): Promise<FormState> {
   return run(async () => {
     const user = await actor();
-    const file = filesOf(form, "sow")[0];
-    if (!file) throw new PortalError("Choose an Excel or CSV file.");
-    if (file.size > 4 * 1024 * 1024) throw new PortalError("That file is larger than 4 MB.");
-    const rows = parseSowSheet(Buffer.from(await file.arrayBuffer()), file.name);
-    const count = await db().saveSowSheet(user, rows);
-    return `Updated ${count} SOW ${count === 1 ? "row" : "rows"}.`;
+    const file = await sheetFile(form, "sow");
+    const rows = parseSowSheet(file.bytes, file.name);
+    const result = await db().saveSowSheet(user, rows);
+    return appendMessage(result, "SOW row");
+  });
+}
+
+export async function deleteSowRecordAction(_prev: FormState, form: FormData): Promise<FormState> {
+  return run(async () => {
+    const user = await actor();
+    await db().deleteSowRecord(user, str(form, "id"));
+  }, "SOW row removed.");
+}
+
+export async function saveChecklistAction(_prev: FormState, form: FormData): Promise<FormState> {
+  return run(async () => {
+    const user = await actor();
+    const input: ChecklistItem = {
+      id: str(form, "id"),
+      sheetNo: num(form, "sheetNo"),
+      project: str(form, "project"),
+      sprint: str(form, "sprint"),
+      task: str(form, "task"),
+      resource: str(form, "resource"),
+      completedOn: str(form, "completedOn"),
+      status: str(form, "status"),
+      clientApproval: str(form, "clientApproval"),
+      source: "manual",
+    };
+    await db().saveChecklistItem(user, input);
+  }, "Checklist row saved.");
+}
+
+export async function deleteChecklistAction(_prev: FormState, form: FormData): Promise<FormState> {
+  return run(async () => {
+    const user = await actor();
+    await db().deleteChecklistItem(user, str(form, "id"));
+  }, "Checklist row removed.");
+}
+
+export async function uploadChecklistAction(_prev: FormState, form: FormData): Promise<FormState> {
+  return run(async () => {
+    const user = await actor();
+    const report = hourlyReport(await sheetFile(form, "sheet"));
+    const result = await db().saveChecklistSheet(user, report.rows);
+    return appendMessage(result, "checklist row", formatRowErrors(report.errors));
   });
 }
 
@@ -699,7 +778,7 @@ export async function saveSowRecordAction(_prev: FormState, form: FormData): Pro
     const user = await actor();
     const input: SowRecord = {
       id: str(form, "id"),
-      kind: "status",
+      kind: choice(form, "kind", ["status", "bid"] as const, "status"),
       sheetNo: num(form, "sheetNo"),
       project: str(form, "project"),
       sprint: str(form, "sprint"),
@@ -741,6 +820,7 @@ export async function raiseEscalationAction(_prev: FormState, form: FormData): P
     const user = await actor();
     await db().raiseEscalation(user, {
       projectId: str(form, "projectId"),
+      projectName: str(form, "projectName"),
       type: choice(form, "type", ["blocker", "concern", "dependency"] as const, "blocker") satisfies Escalation["type"],
       description: str(form, "description"),
       ownerName: str(form, "ownerName"),
@@ -757,7 +837,13 @@ export async function raiseEscalationAction(_prev: FormState, form: FormData): P
 export async function setEscalationStatusAction(_prev: FormState, form: FormData) {
   return run(async () => {
     const user = await actor();
-    await db().setEscalationStatus(user, str(form, "id"), choice(form, "status", ["open", "in_review", "resolved"] as const, "open"));
+    await db().saveEscalation(user, {
+      id: str(form, "id"),
+      status: choice(form, "status", ["open", "in_review", "resolved"] as const, "open"),
+      ownerName: form.has("ownerName") ? str(form, "ownerName") : undefined,
+      dueDate: form.has("dueDate") ? str(form, "dueDate") : undefined,
+      resolutionNote: form.has("resolutionNote") ? str(form, "resolutionNote") : undefined,
+    });
   }, "Escalation updated.");
 }
 

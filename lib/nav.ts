@@ -1,6 +1,7 @@
-import { canAny, canSeeIntake } from "@/lib/access";
+import { canAny } from "@/lib/access";
 import { showCommercials } from "@/lib/commercial";
 import type { PermissionKey } from "@/lib/permissions";
+import { canEditTab, type TabKey } from "@/lib/tab-access";
 import type { SessionUser } from "@/lib/types";
 
 export type NavItem = {
@@ -9,18 +10,19 @@ export type NavItem = {
   icon: string;
   section: string;
   allow: (user: SessionUser) => boolean;
+  tab?: TabKey;
 };
 
 export const NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: "dashboard", section: "Workspace", allow: (user) => canAny(user, ["dashboard.view"]) },
-  { href: "/work", label: "My work", icon: "work", section: "Workspace", allow: (user) => canAny(user, ["tasks.view"]) },
-  { href: "/timesheets", label: "DSR", icon: "time", section: "Workspace", allow: (user) => canAny(user, ["timesheets.submit", "timesheets.approve", "timesheets.view_all"]) },
-  { href: "/intake", label: "Project intake", icon: "intake", section: "Operations", allow: (user) => canSeeIntake(user) },
-  { href: "/sow", label: "SOW", icon: "sow", section: "Operations", allow: (user) => canSeeIntake(user) },
-  { href: "/resources", label: "Resources", icon: "resources", section: "Operations", allow: (user) => canAny(user, ["projects.view", "projects.view_all", "tasks.view", "tasks.manage"]) },
-  { href: "/delivery", label: "Tasks", icon: "tasks", section: "Operations", allow: (user) => canAny(user, ["tasks.view", "tasks.manage"]) },
-  { href: "/utilization", label: "Utilization", icon: "utilization", section: "Operations", allow: (user) => canAny(user, ["timesheets.view_all", "billing.features", "reports.project", "reports.financial"]) },
-  { href: "/escalations", label: "Escalations", icon: "alert", section: "Operations", allow: (user) => canAny(user, ["projects.view", "projects.view_all", "tasks.view"]) },
+  { href: "/work", label: "My work", icon: "work", section: "Workspace", allow: () => true, tab: "myWork" },
+  { href: "/timesheets", label: "DSR", icon: "time", section: "Workspace", allow: () => true, tab: "dsrIntake" },
+  { href: "/project-status", label: "Project management", icon: "intake", section: "Operations", allow: () => true, tab: "projectIntake" },
+  { href: "/sow", label: "SOW management", icon: "sow", section: "Operations", allow: () => true, tab: "sowManagement" },
+  { href: "/delivery", label: "Task management", icon: "tasks", section: "Operations", allow: () => true, tab: "dsrHourlyTracker" },
+  { href: "/utilization", label: "Resource management", icon: "resources", section: "Operations", allow: () => true, tab: "utilization" },
+  { href: "/escalations", label: "Escalations", icon: "alert", section: "Operations", allow: () => true, tab: "escalations" },
+  { href: "/checklist", label: "Delivery checklist", icon: "checklist", section: "Operations", allow: () => true, tab: "deliveryChecklist" },
   { href: "/projects", label: "Projects", icon: "projects", section: "Delivery", allow: (user) => canAny(user, ["projects.view", "projects.view_all"]) },
   { href: "/health", label: "Project health", icon: "health", section: "Delivery", allow: (user) => user.roleSlug === "director" },
   { href: "/clients", label: "Clients", icon: "clients", section: "Delivery", allow: (user) => canAny(user, ["clients.view"]) },
@@ -34,7 +36,13 @@ export const NAV: NavItem[] = [
 ];
 
 export function navigation(user: SessionUser) {
-  return NAV.filter((item) => item.allow(user) && (showCommercials || item.section !== "Commercial")).map(({ href, label, icon, section }) => ({ href, label, icon, section }));
+  return NAV.filter((item) => item.allow(user) && (showCommercials || item.section !== "Commercial")).map(({ href, label, icon, section, tab }) => ({
+    href,
+    label,
+    icon,
+    section,
+    disabled: tab ? !canEditTab(user, tab) : false,
+  }));
 }
 
 export type NavLink = ReturnType<typeof navigation>[number];

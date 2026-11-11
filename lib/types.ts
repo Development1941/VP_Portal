@@ -134,6 +134,13 @@ export type Task = {
   actualHours: number;
 };
 
+export type AuditStamp = {
+  createdBy?: string;
+  createdAt?: string;
+  updatedBy?: string;
+  updatedAt?: string;
+};
+
 export type Escalation = {
   id: string;
   projectId: string;
@@ -143,6 +150,33 @@ export type Escalation = {
   dueDate: string;
   status: "open" | "in_review" | "resolved";
   createdBy: string;
+  createdAt: string;
+  projectName?: string;
+  sourceEntryId?: string;
+  resolutionNote?: string;
+  updatedBy?: string;
+  updatedAt?: string;
+};
+
+export type ChecklistItem = AuditStamp & {
+  id: string;
+  sheetNo: number;
+  project: string;
+  sprint: string;
+  task: string;
+  resource: string;
+  completedOn: string;
+  status: string;
+  clientApproval: string;
+  source: "auto" | "manual" | "upload";
+};
+
+export type ActivityItem = {
+  id: string;
+  action: string;
+  entity: string;
+  summary: string;
+  actorName: string;
   createdAt: string;
 };
 
@@ -266,7 +300,8 @@ export type FxRate = {
   recordedAt: string;
 };
 
-export type StatusUpdate = {
+export type StatusUpdate = AuditStamp & {
+  id?: string;
   sheetNo: number;
   project: string;
   subItem: string;
@@ -278,7 +313,7 @@ export type StatusUpdate = {
   fields?: Record<string, string>;
 };
 
-export type HourlyEntry = {
+export type HourlyEntry = AuditStamp & {
   id: string;
   userId: string;
   roleName: string;
@@ -300,9 +335,10 @@ export type HourlyEntry = {
   actualHours: number | null;
   approval: string;
   notes: string;
+  blocker?: string;
 };
 
-export type SowRecord = {
+export type SowRecord = AuditStamp & {
   id: string;
   kind: "status" | "bid";
   sheetNo: number;
@@ -340,6 +376,8 @@ export type Workspace = {
   statusUpdates: StatusUpdate[];
   sowRecords: SowRecord[];
   hourlyEntries: HourlyEntry[];
+  checklistItems: ChecklistItem[];
+  activity: ActivityItem[];
 };
 
 export type Result = { error?: string };

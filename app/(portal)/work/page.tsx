@@ -2,10 +2,10 @@ import { WorkBoard } from "@/components/work/board";
 import { Denied, PageHeader } from "@/components/common/ui";
 import { canEditTask, leadsProject, projectVisible, taskOnBoard } from "@/lib/access";
 import { prettyDate } from "@/lib/format";
-import { nameOf, projectOf, requirePage } from "@/lib/page";
+import { nameOf, projectOf, requireTab } from "@/lib/page";
 
 export default async function WorkPage() {
-  const { user, data, allowed } = await requirePage(["tasks.view"]);
+  const { user, data, allowed } = await requireTab("myWork");
   if (!allowed) return <Denied title="My work" />;
   const tasks = data.tasks.filter((task) => taskOnBoard(user, task, projectOf(data, task.projectId), data.members));
   const reviewing = data.projects.some((project) => leadsProject(user, project, data.members));

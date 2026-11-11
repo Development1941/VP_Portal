@@ -1,77 +1,105 @@
-import Link from "next/link";
-import { setDeliveryStatusAction, uploadSowAction } from "@/app/actions";
+import { submitIntakeAction } from "@/app/actions";
 import { ActionForm, Submit } from "@/components/common/forms";
-import { Badge, Denied, PageHeader, Stat } from "@/components/common/ui";
-import { DELIVERY_STATUSES } from "@/lib/delivery";
-import { can, canSeeIntake } from "@/lib/access";
+import { HoursField } from "@/components/intake/hours-field";
+import { Denied, PageHeader, Stat } from "@/components/common/ui";
+import { SowStatusBoard } from "@/components/sheets/sow-board";
 import { ArrivalToast } from "@/components/toast";
-import { clientOf, requirePage } from "@/lib/page";
+import { db } from "@/lib/data";
+import { REQUIREMENT_SOURCES } from "@/lib/delivery";
+import { requireTab } from "@/lib/page";
+import { sowNeedsAttention } from "@/lib/sow-board";
 
 export default async function SowPage({ searchParams }: { searchParams: Promise<{ intake?: string }> }) {
   const query = await searchParams;
-  const { user, data, allowed } = await requirePage(["projects.view", "projects.view_all", "projects.manage", "projects.intake"]);
-  if (!allowed || !canSeeIntake(user)) return <Denied title="SOW management" />;
-  const counts = {
-    progress: data.projects.filter((project) => project.deliveryStatus === "in_progress").length,
-    done: data.projects.filter((project) => project.deliveryStatus === "done").length,
-    blocked: data.projects.filter((project) => project.deliveryStatus === "blocked").length,
-  };
-  const manage = can(user, "projects.manage") || can(user, "projects.view_all");
+  const { user, data, allowed } = await requireTab("sowManagement");
+  if (!allowed) return <Denied title="Statements of work" />;
+  const organizations = await db().organizations(user);
+  const owners = await db().intakeOwners(user);
+  const ownerDefault = owners.some((person) => person.id === user.id) ? user.id : owners[0]?.id || "";
+  const sows = data.sowRecords.filter((row) => row.kind === "status");
+  const bids = data.sowRecords.filter((row) => row.kind === "bid");
+  const signed = sows.filter((row) => row.signature.trim().toLowerCase() === "signed").length;
+  const unsigned = sows.length - signed;
+  const addenda = sows.filter(sowNeedsAttention).length;
+  const sowProjects = new Set(sows.map((row) => row.project.trim().toLowerCase())).size;
 
   return (
     <>
-      {query.intake ? <ArrivalToast title="Project intake completed." body="It is now with SOW. The client, admin, director, and the intake owner have been notified." /> : null}
-      <PageHeader eyebrow="Operations" title="Statements of work" />
-      <div className="stats">
-        <Stat label="Projects" value={String(data.projects.length)} />
-        <Stat label="In progress" value={String(counts.progress)} />
-        <Stat label="Done" value={String(counts.done)} />
-        <Stat label="Blocked" value={String(counts.blocked)} />
+      {query.intake ? (
+        <ArrivalToast title="SOW requisition submitted." body="It was added to SOW status. The client, admin, director, and the intake owner have been notified." />
+      ) : null}
+      <PageHeader eyebrow="Operations" title="Statements of work" lede="SOW management and intake. New data is appended to the existing records." />
+      <div className="stats stats-5">
+        <Stat label="SOWs" value={String(sows.length)} href="#sow-status" detail={`${sows.length} SOW rows across ${sowProjects} ${sowProjects === 1 ? "project" : "projects"}. ${signed} signed, ${unsigned} awaiting signature.`} />
+        <Stat label="Signed" value={String(signed)} href="#sow-status" detail={`${signed} of ${sows.length} SOWs are marked Signed.`} />
+        <Stat label="Awaiting signature" value={String(unsigned)} href="#sow-status" detail={`${unsigned} SOWs are Unsigned or have no signature status yet.`} />
+        <Stat label="Addendum / CR needed" value={String(addenda)} href="#sow-status" detail={`${addenda} SOWs have a change request or addendum noted. These also show on the Dashboard under Needs attention.`} />
+        <Stat label="SOW bids" value={String(bids.length)} href="#sow-status" detail={`${bids.length} open bids are listed under SOW bids.`} />
       </div>
-      <section className="card">
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Project</th><th>Client</th><th>Status</th><th>SOW stage</th><th>SOW PDF</th><th></th></tr>
-            </thead>
-            <tbody>
-              {data.projects.map((project) => (
-                <tr key={project.id}>
-                  <td><b>{project.name}</b></td>
-                  <td>{clientOf(data, project.clientId)?.company || "Client hidden"}</td>
-                  <td>
-                    {manage ? (
-                      <ActionForm action={setDeliveryStatusAction} className="inline-form">
-                        <input type="hidden" name="projectId" value={project.id} />
-                        <select name="deliveryStatus" defaultValue={project.deliveryStatus}>
-                          {DELIVERY_STATUSES.map(([value, label]) => (
-                            <option key={value} value={value}>{label}</option>
-                          ))}
-                        </select>
-                        <Submit variant="ghost">Save</Submit>
-                      </ActionForm>
-                    ) : (
-                      <Badge value={project.deliveryStatus} />
-                    )}
-                  </td>
-                  <td><Badge value={project.sowStage} /></td>
-                  <td>
-                    {project.sowFileName ? <span>{project.sowFileName}</span> : null}
-                    {manage ? (
-                      <ActionForm action={uploadSowAction} className="inline-form">
-                        <input type="hidden" name="projectId" value={project.id} />
-                        <input name="file" type="file" accept=".pdf" />
-                        <Submit variant="ghost">Attach</Submit>
-                      </ActionForm>
-                    ) : null}
-                  </td>
-                  <td><Link href={`/sow/${project.id}`}>Review</Link></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <details className="card intake-form intake-history" open={!data.projects.length}>
+        <summary>SOW requisition</summary>
+        <ActionForm action={submitIntakeAction} className="intake-fields">
+          <div className="form-grid intake-fields-scroll">
+            <label className="field">
+              <span>Client name</span>
+              <input name="clientName" required defaultValue={user.fullName} />
+            </label>
+            <label className="field">
+              <span>Project name</span>
+              <input name="name" required placeholder="Atlas Ledger Migration" />
+            </label>
+            <HoursField />
+            <label className="field">
+              <span>Requested start date</span>
+              <input name="startDate" type="date" required />
+            </label>
+            <label className="field">
+              <span>Project due date</span>
+              <input name="dueDate" type="date" required />
+            </label>
+            <label className="field">
+              <span>Initiated by</span>
+              <input value={user.fullName} readOnly />
+            </label>
+            <label className="field">
+              <span>Initiated from</span>
+              <select name="initiatedFrom" required defaultValue={organizations[0] || ""}>
+                {organizations.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>Intake owner</span>
+              <select name="ownerId" required defaultValue={ownerDefault}>
+                {owners.map((person) => (
+                  <option key={person.id} value={person.id}>{person.fullName} · {person.roleName}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>Source of requirement</span>
+              <select name="source" defaultValue="requirement_document">
+                {REQUIREMENT_SOURCES.map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field wide">
+              <span>Summary and expected outcome</span>
+              <textarea name="summary" className="intake-summary" placeholder="Optional" />
+            </label>
+            <label className="field wide">
+              <span>Upload requirement documents, proposals or meeting transcripts</span>
+              <input name="files" type="file" multiple accept=".pdf,.doc,.docx,.txt,.vtt" />
+            </label>
+          </div>
+          <div className="actions">
+            <Submit>Submit requisition</Submit>
+          </div>
+        </ActionForm>
+      </details>
+      <SowStatusBoard records={data.sowRecords} editable />
     </>
   );
 }

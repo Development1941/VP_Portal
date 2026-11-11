@@ -28,5 +28,9 @@ export function presentSow(row: SowRecord): SowRecord {
     signedOn: (row.signedOn || "").trim(),
     changeRequest: row.changeRequest || "",
     company: (row.company || "").trim() || sowCompany(project),
+    createdBy: row.createdBy,
+    createdAt: row.createdAt,
+    updatedBy: row.updatedBy,
+    updatedAt: row.updatedAt,
   };
 }

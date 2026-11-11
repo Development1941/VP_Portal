@@ -7,11 +7,25 @@ import { addDays, stamp, todayIso } from "@/lib/dates";
 import { currencyCode, isCurrency } from "@/lib/currency";
 import { convertMoney, crossRate, marketBoard } from "@/lib/fx";
 import { nid, prettyDate, roundMoney } from "@/lib/format";
-import { canUseHourlyTracker, hourlyRowsForUser, isResourceAllocation, presentHourlyEntry, type HourlySheetRow } from "@/lib/hourly-sheet";
+import { hourlyRowsForUser, isResourceAllocation, presentHourlyEntry, type HourlySheetRow } from "@/lib/hourly-sheet";
+import {
+  ACTIVITY_PATTERN,
+  appendByKey,
+  applyApprovalWriteBack,
+  assertBlockerRemarks,
+  checklistIdFor,
+  deriveChecklist,
+  dsrStatusForEscalation,
+  hourlyDedupeKey,
+  syncBlockerEscalation,
+} from "@/lib/pmd-flow";
+import { assertCanEdit, assertHourlyWrite, type TabKey } from "@/lib/tab-access";
 import { PortalError } from "@/lib/form";
 import { invalidatePortalCache } from "@/lib/portal-cache";
 import { nextInvoiceStatus, resolveBillRate } from "@/lib/metrics";
 import type {
+  ActivityItem,
+  ChecklistItem,
   Client,
   Escalation,
   Feature,
@@ -32,7 +46,7 @@ import type {
   Workstream,
 } from "@/lib/types";
 import { STATUS_UPDATES } from "@/lib/demo/status-board";
-import { canPublishStatus, presentStatus, visibleStatus } from "@/lib/status-board";
+import { latestStatus, presentStatus, statusIdentity, visibleStatus } from "@/lib/status-board";
 import { DEFAULT_SOW } from "@/lib/demo/sow-board";
 import { presentSow } from "@/lib/sow-board";
 import { buildSeed, type DemoStore, type DemoUser } from "@/lib/demo/seed";
@@ -71,6 +85,7 @@ function hydrate(store: DemoStore): DemoStore {
   store.escalations = store.escalations ?? [];
   store.files = store.files ?? [];
   store.hourlyEntries = store.hourlyEntries ?? [];
+  store.checklistItems = store.checklistItems ?? [];
   store.workstreams = store.workstreams?.length ? store.workstreams : defaultWorkstreams();
   store.currency = currencyCode(store.currency);
   store.fxRates = store.fxRates ?? [];
@@ -173,9 +188,11 @@ function ensureIntakeAccess(store: DemoStore) {
   const ownerRole = store.roles.find((role) => role.slug === "project_owner");
   const scrum = store.roles.find((role) => role.slug === "scrum_master");
   const clientRole = store.roles.find((role) => role.slug === "client");
+  const developer = store.roles.find((role) => role.slug === "developer");
   const people: DemoUser[] = [
     { id: "usr_manav", fullName: "Manav Singal", email: "manav@embee.local", password: "demo123", title: "Project Manager / PO", phone: "", roleId: ownerRole?.id || "role_owner", roleName: "Project Manager / PO", roleSlug: "project_owner", status: "active", hourlyCost: 0 },
     { id: "usr_kaushik", fullName: "Kaushik", email: "sm@embee.local", password: "demo123", title: "Scrum Master", phone: "", roleId: scrum?.id || "role_sm", roleName: "Scrum Master", roleSlug: "scrum_master", status: "active", hourlyCost: 0 },
+    { id: "usr_yuvraj", fullName: "Yuvraj", email: "yuvraj@embee.local", password: "demo123", title: "Developer", phone: "", roleId: developer?.id || "role_member", roleName: developer?.name || "Developer", roleSlug: "developer", status: "active", hourlyCost: 0 },
     { id: "usr_rakhee", fullName: "Rakhee", email: "rakhee@embee.local", password: "demo123", title: "Client", phone: "", roleId: clientRole?.id || "role_client", roleName: "Client", roleSlug: "client", status: "active", hourlyCost: 0 },
     { id: "usr_brian", fullName: "Brian", email: "brian@embee.local", password: "demo123", title: "Client", phone: "", roleId: clientRole?.id || "role_client", roleName: "Client", roleSlug: "client", status: "active", hourlyCost: 0 },
   ];
@@ -339,7 +356,11 @@ export function demoAuthenticate(email: string, password: string) {
 }
 
 export async function workspace(user: SessionUser): Promise<Workspace> {
-  const store = read();
+  let store = read();
+  if (deriveChecklist(store.hourlyEntries ?? [], store.checklistItems ?? [], stamp()).length) {
+    await mutate((draft) => syncChecklist(draft));
+    store = read();
+  }
   const ids = visibleIds(store, user);
   const seeClients = can(user, "clients.view");
   const seeMoney = can(user, "invoices.view") || can(user, "reports.financial");
@@ -374,14 +395,30 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
     payments: seePayments ? store.payments.filter((item) => !item.projectId || ids.has(item.projectId) || can(user, "projects.view_all")) : [],
     notifications: store.notifications.filter((item) => item.userId === user.id),
     audit: seeAudit ? store.audit : [],
-    escalations: (store.escalations ?? []).filter((item) => ids.has(item.projectId)),
+    escalations: (store.escalations ?? []).map((item) => ({ ...item, projectName: item.projectName || store.projects.find((project) => project.id === item.projectId)?.name || "" })),
     files: (store.files ?? []).filter((item) => ids.has(item.projectId)),
     workstreams: store.workstreams ?? [],
     fxRates: store.fxRates ?? [],
     statusUpdates: visibleStatus(user, (store.statusSheetReady ? store.statusUpdates ?? [] : STATUS_UPDATES).map(presentStatus)),
     sowRecords: visibleStatus(user, (store.sowSheetReady ? store.sowRecords ?? [] : DEFAULT_SOW).map(presentSow)),
     hourlyEntries: visibleHours(user, store.hourlyEntries ?? []),
+    checklistItems: [...(store.checklistItems ?? [])].sort((a, b) => a.sheetNo - b.sheetNo),
+    activity: sheetActivity(store),
   };
+}
+
+function sheetActivity(store: DemoStore): ActivityItem[] {
+  return store.audit
+    .filter((entry) => ACTIVITY_PATTERN.test(entry.action))
+    .slice(0, 8)
+    .map((entry) => ({
+      id: entry.id,
+      action: entry.action,
+      entity: entry.entity,
+      summary: entry.summary,
+      actorName: store.users.find((person) => person.id === entry.actorId)?.fullName || "System",
+      createdAt: entry.createdAt,
+    }));
 }
 
 function syncRoles(store: DemoStore) {
@@ -925,15 +962,63 @@ export function saveProfile(user: SessionUser, input: { fullName: string; title:
 
 function visibleHours(user: SessionUser, entries: HourlyEntry[]) {
   const ready = entries.map((entry) => presentHourlyEntry({ ...entry, role: "", person: entry.resource || "" }));
-  if (canUseHourlyTracker(user)) return ready;
-  if (can(user, "projects.view") || can(user, "projects.view_all") || can(user, "tasks.view") || can(user, "tasks.manage")) return ready.filter(isResourceAllocation);
-  return ready.filter((entry) => entry.userId === user.id);
+  return visibleStatus(user, ready);
+}
+
+function hourlyTab(row: { estimatedHours?: number | null; targetHours?: number | null; estStart?: string }): TabKey {
+  return isResourceAllocation(row) ? "utilization" : "dsrHourlyTracker";
+}
+
+function projectIdForName(store: DemoStore, name: string) {
+  const wanted = name.trim().toLowerCase();
+  if (!wanted) return "";
+  return store.projects.find((project) => project.name.trim().toLowerCase() === wanted || project.code.trim().toLowerCase() === wanted)?.id || "";
+}
+
+function syncChecklist(store: DemoStore) {
+  store.checklistItems = store.checklistItems ?? [];
+  const fresh = deriveChecklist(store.hourlyEntries ?? [], store.checklistItems, stamp());
+  if (!fresh.length) return 0;
+  store.checklistItems.push(...fresh);
+  for (const item of fresh) {
+    store.audit.unshift({ id: nid("au"), actorId: "system", action: "checklist.auto", entity: "checklist", entityId: item.id, summary: `${item.task} on ${item.project} is complete and was added to the delivery checklist.`, createdAt: stamp() });
+  }
+  return fresh.length;
+}
+
+function applyHourlySideEffects(store: DemoStore, user: SessionUser, entries: HourlyEntry[]) {
+  store.escalations = store.escalations ?? [];
+  for (const entry of entries) {
+    if (isResourceAllocation(entry)) continue;
+    const result = syncBlockerEscalation(store.escalations, entry, {
+      actorId: user.id,
+      actorName: user.fullName,
+      now: stamp(),
+      projectId: projectIdForName(store, entry.project),
+      makeId: () => nid("esc"),
+    });
+    if (result.action === "created" || result.action === "reopened") {
+      audit(store, user, "escalation.auto", "escalation", result.item?.id ?? "", `Blocked: ${entry.task || "task"} on ${entry.project}. ${entry.blocker ?? ""}`.trim());
+      const project = store.projects.find((item) => item.id === result.item?.projectId);
+      if (project) notify(store, project.ownerId, "Blocker raised", `${user.fullName} marked ${entry.task || "a task"} on ${project.name} as Blocked.`, "/escalations");
+    } else if (result.action === "resolved") {
+      audit(store, user, "escalation.resolve", "escalation", result.item?.id ?? "", `Unblocked ${entry.task || "task"} on ${entry.project}.`);
+    }
+  }
+  syncChecklist(store);
 }
 
 function hourlyPayload(user: SessionUser, row: HourlySheetRow, id = ""): HourlyEntry {
-  if (row.hours < 0 || row.hours > 24) throw new PortalError("Hours Spent must be from 0 to 24.");
+  if (row.hours < 0 || (!isResourceAllocation(row) && row.hours > 24)) throw new PortalError("Hours Spent must be from 0 to 24.");
   if (!row.workDate && !row.task && !row.project) throw new PortalError("Each row needs a project or a task.");
+  if (!row.project.trim()) throw new PortalError("Project is required.");
+  const now = stamp();
   return {
+    createdBy: user.id,
+    createdAt: now,
+    updatedBy: user.id,
+    updatedAt: now,
+    blocker: (row.blocker ?? "").trim(),
     id: id || nid("hour"),
     userId: user.id,
     roleName: user.roleName,
@@ -959,33 +1044,37 @@ function hourlyPayload(user: SessionUser, row: HourlySheetRow, id = ""): HourlyE
 }
 
 export function saveAllocationSheet(user: SessionUser, rows: HourlySheetRow[]) {
-  if (!canUseHourlyTracker(user)) throw new PortalError("You cannot upload resource allocation.");
+  assertCanEdit(user, "utilization");
   const plan = hourlyRowsForUser(rows, user).filter(isResourceAllocation);
   if (!plan.length) throw new PortalError("That file has no resource allocation rows. Use the plan sheet with Estimated Hours.");
   const incoming = plan.map((row) => hourlyPayload(user, { ...row, hours: Math.min(24, Math.max(0, row.hours)) }));
   return mutate((store) => {
-    store.hourlyEntries = (store.hourlyEntries ?? []).filter((entry) => !isResourceAllocation(entry));
-    store.hourlyEntries.push(...incoming);
-    audit(store, user, "allocation.upload", "hourly", user.id, `Uploaded ${incoming.length} resource allocation ${incoming.length === 1 ? "row" : "rows"}.`);
-    return incoming.length;
+    const merged = appendByKey(store.hourlyEntries ?? [], incoming, hourlyDedupeKey);
+    store.hourlyEntries = merged.rows;
+    syncChecklist(store);
+    audit(store, user, "allocation.upload", "hourly", user.id, `Added ${merged.added.length} resource allocation ${merged.added.length === 1 ? "row" : "rows"}.`);
+    return { added: merged.added.length, skipped: merged.skipped };
   });
 }
 
 export function saveHourlySheet(user: SessionUser, rows: HourlySheetRow[]) {
-  if (!canUseHourlyTracker(user)) throw new PortalError("You cannot upload an hourly tracker.");
+  assertCanEdit(user, "dsrHourlyTracker");
   const logs = hourlyRowsForUser(rows, user).filter((row) => !isResourceAllocation(row));
   if (!logs.length) throw new PortalError("That file has no hourly rows. Use the sheet with Date and Hours Spent.");
   const incoming = logs.map((row) => hourlyPayload(user, row));
   return mutate((store) => {
-    store.hourlyEntries = (store.hourlyEntries ?? []).filter((entry) => isResourceAllocation(entry) || entry.userId !== user.id);
-    store.hourlyEntries.push(...incoming);
-    audit(store, user, "hourly.upload", "hourly", user.id, `Uploaded ${incoming.length} hourly ${incoming.length === 1 ? "row" : "rows"} for ${user.roleName}.`);
-    return incoming.length;
+    const merged = appendByKey(store.hourlyEntries ?? [], incoming, hourlyDedupeKey);
+    store.hourlyEntries = merged.rows;
+    applyHourlySideEffects(store, user, merged.added);
+    audit(store, user, "hourly.upload", "hourly", user.id, `Added ${merged.added.length} hourly ${merged.added.length === 1 ? "row" : "rows"}.`);
+    return { added: merged.added.length, skipped: merged.skipped };
   });
 }
 
 export function saveHourlyEntry(user: SessionUser, input: HourlyEntry) {
-  if (!canUseHourlyTracker(user)) throw new PortalError("You cannot update the hourly tracker.");
+  const tab = hourlyTab(input);
+  assertHourlyWrite(user, { plan: tab === "utilization" });
+  if (tab === "dsrHourlyTracker") assertBlockerRemarks({ status: input.status, blocker: input.blocker });
   const next = hourlyPayload(user, {
     sheetNo: input.sheetNo,
     project: input.project,
@@ -1007,25 +1096,41 @@ export function saveHourlyEntry(user: SessionUser, input: HourlyEntry) {
     notes: input.task || input.notes,
     role: "",
     person: input.resource,
+    blocker: input.blocker ?? "",
   }, input.id);
   return mutate((store) => {
     const entries = store.hourlyEntries ?? [];
-    const existing = entries.find((entry) => entry.id === input.id && entry.userId === user.id);
+    const existing = entries.find((entry) => entry.id === input.id);
     if (input.id && !existing) throw new PortalError("That hourly row was not found.");
-    if (existing) Object.assign(existing, next, { id: existing.id });
-    else entries.unshift(next);
+    let saved = next;
+    if (existing) {
+      assertHourlyWrite(user, { plan: isResourceAllocation(existing), ownerId: existing.userId });
+      const created = { userId: existing.userId, roleName: existing.roleName, createdBy: existing.createdBy, createdAt: existing.createdAt };
+      Object.assign(existing, next, { id: existing.id }, created);
+      saved = existing;
+    } else entries.unshift(next);
     store.hourlyEntries = entries;
-    audit(store, user, "hourly.save", "hourly", next.id, `Saved ${next.hours}h on ${next.workDate}.`);
+    applyHourlySideEffects(store, user, [saved]);
+    const plan = isResourceAllocation(saved);
+    audit(store, user, plan ? "allocation.save" : "hourly.save", "hourly", saved.id, plan ? `Saved allocation for ${saved.task || saved.project}.` : `Saved ${saved.hours}h on ${saved.project}${saved.workDate ? ` (${saved.workDate})` : ""}.`);
   });
 }
 
 export function deleteHourlyEntry(user: SessionUser, id: string) {
-  if (!canUseHourlyTracker(user)) throw new PortalError("You cannot update the hourly tracker.");
   return mutate((store) => {
-    const existing = (store.hourlyEntries ?? []).find((entry) => entry.id === id && entry.userId === user.id);
+    const existing = (store.hourlyEntries ?? []).find((entry) => entry.id === id);
     if (!existing) throw new PortalError("That hourly row was not found.");
+    assertHourlyWrite(user, { plan: isResourceAllocation(existing), ownerId: existing.userId });
     store.hourlyEntries = store.hourlyEntries.filter((entry) => entry.id !== id);
-    audit(store, user, "hourly.delete", "hourly", id, "Removed an hourly row.");
+    const linked = (store.escalations ?? []).find((item) => item.sourceEntryId === id && item.status !== "resolved");
+    if (linked) {
+      linked.status = "resolved";
+      linked.resolutionNote = linked.resolutionNote || "The hourly row was removed.";
+      linked.updatedBy = user.id;
+      linked.updatedAt = stamp();
+    }
+    const plan = isResourceAllocation(existing);
+    audit(store, user, plan ? "allocation.delete" : "hourly.delete", "hourly", id, plan ? "Removed an allocation row." : "Removed an hourly row.");
   });
 }
 
@@ -1090,12 +1195,12 @@ export function clientDirectory(user: SessionUser) {
 }
 
 export function organizations(user: SessionUser) {
-  if (!canFileIntake(user)) throw new PortalError("You cannot view organizations.");
+  assertCanEdit(user, "sowManagement");
   return read().organizations.filter((item) => item.status === "active").map((item) => item.name).sort((a, b) => a.localeCompare(b));
 }
 
 export function intakeOwners(user: SessionUser) {
-  if (!canFileIntake(user)) throw new PortalError("You cannot view intake owners.");
+  assertCanEdit(user, "sowManagement");
   return read()
     .users.filter((person) => person.status === "active" && isIntakeOwner(person.roleSlug))
     .map((person) => ({ id: person.id, fullName: person.fullName, roleName: person.roleName }))
@@ -1116,7 +1221,7 @@ function intakeRecipients(users: DemoUser[], ownerId: string, initiated: { name:
 }
 
 export async function submitIntake(user: SessionUser, input: IntakeRequest, files: File[]) {
-  if (!canFileIntake(user)) throw new PortalError("You cannot submit a project intake.");
+  assertCanEdit(user, "sowManagement");
   let projectId = "";
   await mutate((store) => {
     const names = store.organizations.filter((item) => item.status === "active").map((item) => item.name);
@@ -1161,15 +1266,38 @@ export async function submitIntake(user: SessionUser, input: IntakeRequest, file
       notify(store, recipient, "Project intake completed", body, "/sow");
     }
     audit(store, user, "project.intake", "project", projectId, `Submitted intake ${input.name.trim()}.`);
+    const sows = currentSowRows(store);
+    const now = stamp();
+    sows.push(
+      presentSow({
+        id: nid("sow"),
+        kind: "status",
+        sheetNo: sows.filter((row) => row.kind === "status").reduce((max, row) => Math.max(max, row.sheetNo), 0) + 1,
+        project: input.name.trim(),
+        sprint: "",
+        link: "",
+        signature: "",
+        signedOn: "",
+        changeRequest: "",
+        company: "",
+        createdBy: user.id,
+        createdAt: now,
+        updatedBy: user.id,
+        updatedAt: now,
+      }),
+    );
+    store.sowRecords = sows.sort((a, b) => a.kind.localeCompare(b.kind) || a.sheetNo - b.sheetNo);
+    store.sowSheetReady = true;
+    audit(store, user, "sow.add", "sow", projectId, `Added ${input.name.trim()} to SOW status from the SOW requisition.`);
   });
   return projectId;
 }
 
 export function saveSow(user: SessionUser, input: Project) {
   return mutate((store) => {
+    assertCanEdit(user, "sowManagement");
     const existing = requireProject(store, input.id);
     if (!projectVisible(user, existing, store.members)) throw new PortalError("That project is outside your access.");
-    if (!canManageProject(user, existing) && !can(user, "projects.view_all")) throw new PortalError("You cannot finalise this SOW.");
     Object.assign(existing, {
       name: input.name,
       clientId: input.clientId,
@@ -1198,9 +1326,9 @@ export function saveSow(user: SessionUser, input: Project) {
 
 export function setDeliveryStatus(user: SessionUser, projectId: string, deliveryStatus: Project["deliveryStatus"]) {
   return mutate((store) => {
+    assertCanEdit(user, "sowManagement");
     const project = requireProject(store, projectId);
     if (!projectVisible(user, project, store.members)) throw new PortalError("That project is outside your access.");
-    if (!canManageProject(user, project) && !can(user, "projects.view_all")) throw new PortalError("You cannot change this project status.");
     project.deliveryStatus = deliveryStatus;
     project.status = statusForDelivery(deliveryStatus, project.activated);
     audit(store, user, "project.status", "project", projectId, `Set ${project.name} to ${deliveryStatus.replaceAll("_", " ")}.`);
@@ -1210,6 +1338,7 @@ export function setDeliveryStatus(user: SessionUser, projectId: string, delivery
 export async function uploadSowFile(user: SessionUser, projectId: string, file: File) {
   if (!(file instanceof File) || file.size === 0) throw new PortalError("Choose a SOW PDF.");
   if (!file.name.toLowerCase().endsWith(".pdf")) throw new PortalError("The SOW file must be a PDF.");
+  assertCanEdit(user, "sowManagement");
   return mutate((store) => {
     const project = requireProject(store, projectId);
     if (!projectVisible(user, project, store.members)) throw new PortalError("That project is outside your access.");
@@ -1221,12 +1350,12 @@ export async function uploadSowFile(user: SessionUser, projectId: string, file: 
 
 export function finaliseSow(user: SessionUser, projectId: string) {
   return mutate((store) => {
+    assertCanEdit(user, "sowManagement");
     const project = requireProject(store, projectId);
     if (!projectVisible(user, project, store.members)) throw new PortalError("That project is outside your access.");
-    if (!canManageProject(user, project) && !can(user, "projects.view_all")) throw new PortalError("You cannot finalise this SOW.");
     project.sowStage = "finalised";
     audit(store, user, "project.finalise", "project", projectId, `Finalised the SOW for ${project.name}.`);
-    notify(store, project.ownerId, "SOW finalised", `${project.name} can now be staffed.`, "/resources");
+    notify(store, project.ownerId, "SOW finalised", `${project.name} can now be staffed.`, "/utilization");
   });
 }
 
@@ -1269,79 +1398,342 @@ export function saveDeliverySheet(
 
 export function raiseEscalation(
   user: SessionUser,
-  input: { projectId: string; type: Escalation["type"]; description: string; ownerName: string; dueDate: string },
+  input: { projectId: string; projectName?: string; type: Escalation["type"]; description: string; ownerName: string; dueDate: string },
 ) {
+  assertCanEdit(user, "escalations");
   return mutate((store) => {
-    const project = requireProject(store, input.projectId);
-    if (!projectVisible(user, project, store.members)) throw new PortalError("That project is outside your access.");
+    const project = input.projectId ? requireProject(store, input.projectId) : store.projects.find((item) => item.id === projectIdForName(store, input.projectName ?? ""));
+    const projectName = project?.name || (input.projectName ?? "").trim();
+    if (!projectName) throw new PortalError("Name the project this item belongs to.");
     if (!input.description.trim()) throw new PortalError("Describe the issue and the support needed.");
+    const now = stamp();
+    const id = nid("esc");
     store.escalations.unshift({
-      id: nid("esc"),
-      projectId: project.id,
+      id,
+      projectId: project?.id || "",
+      projectName,
       type: input.type,
       description: input.description.trim(),
       ownerName: input.ownerName.trim() || user.fullName,
       dueDate: input.dueDate,
       status: "open",
       createdBy: user.id,
-      createdAt: stamp(),
+      createdAt: now,
+      resolutionNote: "",
+      updatedBy: user.id,
+      updatedAt: now,
     });
-    audit(store, user, "escalation.raise", "project", project.id, `Raised a ${input.type} on ${project.name}.`);
-    notify(store, project.ownerId, "Escalation raised", `${user.fullName} raised a ${input.type} on ${project.name}.`, "/escalations");
+    audit(store, user, "escalation.raise", "escalation", id, `Raised a ${input.type} on ${projectName}.`);
+    if (project) notify(store, project.ownerId, "Escalation raised", `${user.fullName} raised a ${input.type} on ${project.name}.`, "/escalations");
+  });
+}
+
+export function saveEscalation(
+  user: SessionUser,
+  input: { id: string; status: Escalation["status"]; ownerName?: string; dueDate?: string; resolutionNote?: string },
+) {
+  assertCanEdit(user, "escalations");
+  return mutate((store) => {
+    const item = store.escalations.find((entry) => entry.id === input.id);
+    if (!item) throw new PortalError("That escalation was not found.");
+    item.status = input.status;
+    if (input.ownerName != null) item.ownerName = input.ownerName.trim() || item.ownerName;
+    if (input.dueDate != null) item.dueDate = input.dueDate;
+    if (input.resolutionNote != null) item.resolutionNote = input.resolutionNote.trim();
+    item.updatedBy = user.id;
+    item.updatedAt = stamp();
+    const source = item.sourceEntryId ? (store.hourlyEntries ?? []).find((entry) => entry.id === item.sourceEntryId) : undefined;
+    if (source) {
+      source.status = dsrStatusForEscalation(item, source.status);
+      source.updatedBy = user.id;
+      source.updatedAt = stamp();
+      syncChecklist(store);
+    }
+    audit(store, user, "escalation.save", "escalation", item.id, `Set the escalation on ${item.projectName || "a project"} to ${input.status.replaceAll("_", " ")}.`);
   });
 }
 
 export function setEscalationStatus(user: SessionUser, id: string, status: Escalation["status"]) {
-  return mutate((store) => {
-    const item = store.escalations.find((entry) => entry.id === id);
-    if (!item) throw new PortalError("That escalation was not found.");
-    const project = requireProject(store, item.projectId);
-    if (!projectVisible(user, project, store.members)) throw new PortalError("That project is outside your access.");
-    if (!can(user, "projects.manage") && !can(user, "projects.view_all") && !can(user, "tasks.manage")) throw new PortalError("You cannot update that escalation.");
-    item.status = status;
-    audit(store, user, "escalation.status", "escalation", id, `Set escalation to ${status.replaceAll("_", " ")}.`);
-  });
+  return saveEscalation(user, { id, status });
+}
+
+function currentStatusRows(store: DemoStore) {
+  return (store.statusSheetReady ? store.statusUpdates ?? [] : STATUS_UPDATES).map(presentStatus);
+}
+
+function statusRowKey(row: StatusUpdate) {
+  return `${row.project.trim().toLowerCase()}\u0000${row.subItem.trim().toLowerCase()}\u0000${row.statusDate}`;
 }
 
 export function saveStatusSheet(user: SessionUser, rows: StatusUpdate[]) {
-  if (!canPublishStatus(user)) throw new PortalError("Only GSVK SAI can upload the status sheet.");
+  assertCanEdit(user, "projectIntake");
   return mutate((store) => {
-    store.statusUpdates = rows.map(presentStatus);
+    const now = stamp();
+    const current = currentStatusRows(store);
+    const index = new Map(current.map((row, at) => [statusRowKey(row), at]));
+    let added = 0;
+    let updated = 0;
+    for (const raw of rows) {
+      const row = presentStatus({ ...raw, createdBy: user.id, createdAt: now, updatedBy: user.id, updatedAt: now });
+      if (!row.project || !row.statusDate) continue;
+      const at = index.get(statusRowKey(row));
+      if (at == null) {
+        index.set(statusRowKey(row), current.length);
+        current.push(row);
+        added += 1;
+        continue;
+      }
+      const previous = current[at];
+      if (previous.status === row.status && previous.remarks === row.remarks && (previous.company || "") === (row.company || "")) continue;
+      current[at] = { ...previous, status: row.status, remarks: row.remarks, company: row.company || previous.company, fields: { ...previous.fields, ...row.fields }, updatedBy: user.id, updatedAt: now };
+      updated += 1;
+    }
+    store.statusUpdates = current;
     store.statusSheetReady = true;
-    audit(store, user, "status.upload", "status_sheet", "status", `Replaced the status history with ${rows.length} ${rows.length === 1 ? "row" : "rows"}.`);
-    return rows.length;
+    audit(store, user, "status.upload", "status_sheet", "status", `Added ${added} and updated ${updated} project status ${added + updated === 1 ? "row" : "rows"}.`);
+    return { added, skipped: rows.length - added - updated, updated };
   });
 }
 
-export function saveSowSheet(user: SessionUser, rows: SowRecord[]) {
-  if (!canPublishStatus(user)) throw new PortalError("Only the admin can update the SOW status.");
+export function saveStatusEntry(user: SessionUser, input: StatusUpdate) {
+  assertCanEdit(user, "projectIntake");
+  if (!input.project.trim()) throw new PortalError("Project is required.");
+  if (!input.subItem.trim() && !input.remarks.trim()) throw new PortalError("Add an item or the task remarks.");
   return mutate((store) => {
-    const incoming = rows.map(presentSow);
-    const kinds = new Set(incoming.map((row) => row.kind));
-    const kept = (store.sowSheetReady ? store.sowRecords ?? DEFAULT_SOW : DEFAULT_SOW).filter((row) => !kinds.has(row.kind));
-    store.sowRecords = [...kept, ...incoming].sort((a, b) => a.kind.localeCompare(b.kind) || a.sheetNo - b.sheetNo);
+    const now = stamp();
+    const current = currentStatusRows(store);
+    const existing = input.id ? current.find((row) => row.id === input.id) : undefined;
+    if (input.id && !existing) throw new PortalError("That status row was not found.");
+    const statusDate = existing?.statusDate || input.statusDate || latestStatus(current).date || todayIso();
+    const clash = current.find((row) => row.id !== existing?.id && statusRowKey(row) === statusRowKey({ ...input, statusDate } as StatusUpdate));
+    if (clash) throw new PortalError("That item is already on this status sheet. Edit the existing row instead.");
+    if (existing) {
+      Object.assign(existing, {
+        project: input.project.trim(),
+        subItem: input.subItem.trim(),
+        status: input.status.trim(),
+        remarks: input.remarks,
+        company: input.company?.trim() || existing.company,
+        updatedBy: user.id,
+        updatedAt: now,
+      });
+    } else {
+      const sameProject = current.find((row) => row.project.trim().toLowerCase() === input.project.trim().toLowerCase() && row.sheetNo);
+      const sheetNo = input.sheetNo || sameProject?.sheetNo || current.reduce((max, row) => Math.max(max, row.sheetNo), 0) + 1;
+      const row = presentStatus({
+        ...input,
+        project: input.project.trim(),
+        subItem: input.subItem.trim(),
+        status: input.status.trim(),
+        sheetNo,
+        statusDate,
+        company: input.company?.trim() || sameProject?.company || "",
+        createdBy: user.id,
+        createdAt: now,
+        updatedBy: user.id,
+        updatedAt: now,
+      });
+      row.id = statusIdentity(row);
+      current.push(row);
+    }
+    store.statusUpdates = current;
+    store.statusSheetReady = true;
+    audit(store, user, "status.save", "status_sheet", input.id || "new", `Saved ${input.project.trim()}${input.subItem.trim() ? ` · ${input.subItem.trim()}` : ""} as ${input.status.trim() || "no status"}.`);
+  });
+}
+
+export function deleteStatusEntry(user: SessionUser, id: string) {
+  assertCanEdit(user, "projectIntake");
+  return mutate((store) => {
+    const current = currentStatusRows(store);
+    const row = current.find((item) => item.id === id);
+    if (!row) throw new PortalError("That status row was not found.");
+    store.statusUpdates = current.filter((item) => item.id !== id);
+    store.statusSheetReady = true;
+    audit(store, user, "status.delete", "status_sheet", id, `Removed ${row.project}${row.subItem ? ` · ${row.subItem}` : ""} from the status sheet.`);
+  });
+}
+
+function currentSowRows(store: DemoStore) {
+  return (store.sowSheetReady ? store.sowRecords ?? DEFAULT_SOW : DEFAULT_SOW).map(presentSow);
+}
+
+function sowRowKey(row: SowRecord) {
+  return `${row.kind}|${row.project.trim().toLowerCase()}|${row.sprint.trim().toLowerCase()}`;
+}
+
+export function saveSowSheet(user: SessionUser, rows: SowRecord[]) {
+  assertCanEdit(user, "sowManagement");
+  return mutate((store) => {
+    const now = stamp();
+    const current = currentSowRows(store);
+    const index = new Map(current.map((row, at) => [sowRowKey(row), at]));
+    const ids = new Set(current.map((row) => row.id));
+    let added = 0;
+    let updated = 0;
+    for (const raw of rows.map(presentSow)) {
+      const at = index.get(sowRowKey(raw));
+      if (at == null) {
+        const id = ids.has(raw.id) ? nid("sow") : raw.id;
+        ids.add(id);
+        const sheetNo = current.some((row) => row.kind === raw.kind && row.sheetNo === raw.sheetNo)
+          ? current.filter((row) => row.kind === raw.kind).reduce((max, row) => Math.max(max, row.sheetNo), 0) + 1
+          : raw.sheetNo;
+        index.set(sowRowKey(raw), current.length);
+        current.push({ ...raw, id, sheetNo, createdBy: user.id, createdAt: now, updatedBy: user.id, updatedAt: now });
+        added += 1;
+        continue;
+      }
+      const previous = current[at];
+      const merged = {
+        ...previous,
+        link: raw.link || previous.link,
+        signature: raw.signature || previous.signature,
+        signedOn: raw.signedOn || previous.signedOn,
+        changeRequest: raw.changeRequest || previous.changeRequest,
+      };
+      if (JSON.stringify(merged) === JSON.stringify(previous)) continue;
+      current[at] = { ...merged, updatedBy: user.id, updatedAt: now };
+      updated += 1;
+    }
+    store.sowRecords = current.sort((a, b) => a.kind.localeCompare(b.kind) || a.sheetNo - b.sheetNo);
     store.sowSheetReady = true;
-    audit(store, user, "sow.upload", "sow", "status", `Updated ${incoming.length} SOW ${incoming.length === 1 ? "row" : "rows"}.`);
-    return incoming.length;
+    audit(store, user, "sow.upload", "sow", "status", `Added ${added} and updated ${updated} SOW ${added + updated === 1 ? "row" : "rows"}.`);
+    return { added, skipped: rows.length - added - updated, updated };
   });
 }
 
 export function saveSowRecord(user: SessionUser, input: SowRecord) {
-  if (!canPublishStatus(user)) throw new PortalError("Only the admin can update the SOW status.");
+  assertCanEdit(user, "sowManagement");
+  if (!input.project.trim()) throw new PortalError("Project is required.");
   return mutate((store) => {
-    const current = (store.sowSheetReady ? store.sowRecords ?? DEFAULT_SOW : DEFAULT_SOW).map(presentSow);
-    const next = presentSow(input);
-    const index = current.findIndex((row) => row.id === next.id);
-    if (index < 0) throw new PortalError("That SOW row was not found.");
-    current[index] = { ...current[index], ...next, id: current[index].id, kind: current[index].kind, sheetNo: current[index].sheetNo, project: current[index].project, company: current[index].company };
-    store.sowRecords = current;
+    const now = stamp();
+    const current = currentSowRows(store);
+    const index = input.id ? current.findIndex((row) => row.id === input.id) : -1;
+    if (input.id && index < 0) throw new PortalError("That SOW row was not found.");
+    if (index >= 0) {
+      const previous = current[index];
+      current[index] = presentSow({ ...previous, ...input, id: previous.id, kind: previous.kind, sheetNo: input.sheetNo || previous.sheetNo, company: input.company || previous.company, createdBy: previous.createdBy, createdAt: previous.createdAt, updatedBy: user.id, updatedAt: now });
+    } else {
+      const sheetNo = input.sheetNo || current.filter((row) => row.kind === input.kind).reduce((max, row) => Math.max(max, row.sheetNo), 0) + 1;
+      current.push(presentSow({ ...input, id: nid("sow"), sheetNo, company: input.company || "", createdBy: user.id, createdAt: now, updatedBy: user.id, updatedAt: now }));
+    }
+    store.sowRecords = current.sort((a, b) => a.kind.localeCompare(b.kind) || a.sheetNo - b.sheetNo);
     store.sowSheetReady = true;
-    audit(store, user, "sow.edit", "sow", next.id, `Updated the SOW for ${current[index].project}.`);
+    audit(store, user, index >= 0 ? "sow.edit" : "sow.add", "sow", input.id || "new", `${index >= 0 ? "Updated" : "Added"} the SOW ${input.kind === "bid" ? "bid" : "row"} for ${input.project.trim()}.`);
+  });
+}
+
+export function deleteSowRecord(user: SessionUser, id: string) {
+  assertCanEdit(user, "sowManagement");
+  return mutate((store) => {
+    const current = currentSowRows(store);
+    const row = current.find((item) => item.id === id);
+    if (!row) throw new PortalError("That SOW row was not found.");
+    store.sowRecords = current.filter((item) => item.id !== id);
+    store.sowSheetReady = true;
+    audit(store, user, "sow.delete", "sow", id, `Removed the SOW row for ${row.project}.`);
+  });
+}
+
+function writeBackApproval(store: DemoStore, item: ChecklistItem) {
+  return applyApprovalWriteBack(store.hourlyEntries ?? [], item);
+}
+
+export function saveChecklistItem(user: SessionUser, input: ChecklistItem) {
+  assertCanEdit(user, "deliveryChecklist");
+  if (!input.project.trim() || !input.task.trim()) throw new PortalError("Project and task are required.");
+  return mutate((store) => {
+    const now = stamp();
+    store.checklistItems = store.checklistItems ?? [];
+    const existing = input.id ? store.checklistItems.find((item) => item.id === input.id) : undefined;
+    if (input.id && !existing) throw new PortalError("That checklist row was not found.");
+    let saved: ChecklistItem;
+    if (existing) {
+      Object.assign(existing, {
+        project: input.project.trim(),
+        sprint: input.sprint.trim(),
+        task: input.task.trim(),
+        resource: input.resource.trim(),
+        completedOn: input.completedOn,
+        status: input.status.trim(),
+        clientApproval: input.clientApproval.trim(),
+        updatedBy: user.id,
+        updatedAt: now,
+      });
+      saved = existing;
+    } else {
+      const id = checklistIdFor(input.project, input.task);
+      if (store.checklistItems.some((item) => item.id === id)) throw new PortalError("That task is already on the checklist. Edit the existing row instead.");
+      saved = {
+        ...input,
+        id,
+        sheetNo: store.checklistItems.reduce((max, item) => Math.max(max, item.sheetNo), 0) + 1,
+        project: input.project.trim(),
+        task: input.task.trim(),
+        source: "manual",
+        createdBy: user.id,
+        createdAt: now,
+        updatedBy: user.id,
+        updatedAt: now,
+      };
+      store.checklistItems.push(saved);
+    }
+    const changed = writeBackApproval(store, saved);
+    audit(store, user, "checklist.save", "checklist", saved.id, `Saved ${saved.task} on ${saved.project}${saved.clientApproval ? ` (client approval: ${saved.clientApproval})` : ""}.${changed ? ` Updated ${changed} allocation ${changed === 1 ? "row" : "rows"}.` : ""}`);
+  });
+}
+
+export function deleteChecklistItem(user: SessionUser, id: string) {
+  assertCanEdit(user, "deliveryChecklist");
+  return mutate((store) => {
+    const item = (store.checklistItems ?? []).find((entry) => entry.id === id);
+    if (!item) throw new PortalError("That checklist row was not found.");
+    store.checklistItems = store.checklistItems.filter((entry) => entry.id !== id);
+    audit(store, user, "checklist.delete", "checklist", id, `Removed ${item.task} on ${item.project} from the checklist.`);
+  });
+}
+
+export function saveChecklistSheet(user: SessionUser, rows: HourlySheetRow[]) {
+  assertCanEdit(user, "deliveryChecklist");
+  const usable = rows.filter((row) => row.project.trim() && row.task.trim());
+  if (!usable.length) throw new PortalError("That file has no checklist rows. Include Project, Task, Date of completion, Status, and Client Approval.");
+  return mutate((store) => {
+    const now = stamp();
+    store.checklistItems = store.checklistItems ?? [];
+    let added = 0;
+    let updated = 0;
+    for (const row of usable) {
+      const id = checklistIdFor(row.project, row.task);
+      const existing = store.checklistItems.find((item) => item.id === id);
+      const fields = {
+        project: row.project.trim(),
+        sprint: row.sprint.trim(),
+        task: row.task.trim(),
+        resource: row.resource.trim(),
+        completedOn: row.workDate || row.actualEnd,
+        status: row.status.trim() || "Completed",
+        clientApproval: row.approval.trim(),
+      };
+      let saved: ChecklistItem;
+      if (existing) {
+        Object.assign(existing, { ...fields, completedOn: fields.completedOn || existing.completedOn, updatedBy: user.id, updatedAt: now });
+        saved = existing;
+        updated += 1;
+      } else {
+        saved = { ...fields, id, sheetNo: row.sheetNo || store.checklistItems.reduce((max, item) => Math.max(max, item.sheetNo), 0) + 1, source: "upload", createdBy: user.id, createdAt: now, updatedBy: user.id, updatedAt: now };
+        store.checklistItems.push(saved);
+        added += 1;
+      }
+      writeBackApproval(store, saved);
+    }
+    audit(store, user, "checklist.upload", "checklist", "sheet", `Added ${added} and updated ${updated} checklist ${added + updated === 1 ? "row" : "rows"}.`);
+    return { added, skipped: rows.length - usable.length, updated };
   });
 }
 
 export function saveWorkstream(user: SessionUser, input: { id: string; ownerName: string; targetDate: string; status: Workstream["status"] }) {
-  if (!can(user, "projects.manage") && !can(user, "projects.view_all")) throw new PortalError("You cannot update workstreams.");
+  assertCanEdit(user, "escalations");
   return mutate((store) => {
     const item = store.workstreams.find((entry) => entry.id === input.id);
     if (!item) throw new PortalError("That workstream was not found.");

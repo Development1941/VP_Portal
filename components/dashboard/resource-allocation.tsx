@@ -2,11 +2,12 @@ import Link from "next/link";
 import { uploadAllocationAction } from "@/app/actions";
 import { SheetUpload } from "@/components/dashboard/sheet-upload";
 import { HourlyEditRow } from "@/components/dashboard/row-edit";
+import { AddHourlyEntry, ExportCsv } from "@/components/sheets/add-entry";
 import { hoursLabel, prettyDate } from "@/lib/format";
 import { isResourceAllocation } from "@/lib/hourly-sheet";
 import type { HourlyEntry } from "@/lib/types";
 
-export function ResourceAllocation({ rows, editable, linked }: { rows: HourlyEntry[]; editable: boolean; linked?: boolean }) {
+export function ResourceAllocation({ rows, editable, linked, allowExport = false }: { rows: HourlyEntry[]; editable: boolean; linked?: boolean; allowExport?: boolean }) {
   const allocated = rows.filter(isResourceAllocation);
   const people = allocationGroups(allocated);
   const estimated = allocated.reduce((sum, row) => sum + (row.estimatedHours ?? 0), 0);
@@ -21,16 +22,18 @@ export function ResourceAllocation({ rows, editable, linked }: { rows: HourlyEnt
           </span>
         </div>
         <div className="card-tools">
+          {editable ? <AddHourlyEntry plan /> : null}
           {editable ? (
             <SheetUpload
               action={uploadAllocationAction}
               button="Upload CSV"
               title="Upload resource allocation"
-              hint="Use the utilization plan CSV. It reads S.no, Project, Sprint, Resource, Task, EST Start Date, EST End Date, Estimated Hours, Target hours embee, Actual Start Date, Actual End Date, Actual Hours, Status, and Approval."
+              hint="Use the utilization plan CSV. It reads S.no, Project, Sprint, Resource, Task, EST Start Date, EST End Date, Estimated Hours, Target hours embee, Actual Start Date, Actual End Date, Actual Hours, Status, and Approval. New rows are appended and exact duplicates are skipped."
               field="sheet"
             />
           ) : null}
-          {linked ? <Link href="/resources">Full list</Link> : null}
+          {allowExport ? <ExportCsv kind="utilization" /> : null}
+          {linked ? <Link href="/utilization">Full report</Link> : null}
         </div>
       </div>
       {people.length ? (

@@ -5,15 +5,19 @@ import { addDays, stamp, todayIso } from "@/lib/dates";
 import { prettyDate, roundMoney } from "@/lib/format";
 import { assertIntake, billingModelFor, clientForProfile, isIntakeOwner, keepDelivery, sowDefaults, statusForDelivery, type IntakeRequest } from "@/lib/delivery";
 import { packHours, unpackHours } from "@/lib/health";
-import { canUseHourlyTracker, hourlyRowsForUser, isResourceAllocation, type HourlySheetRow } from "@/lib/hourly-sheet";
+import { hourlyRowsForUser, isResourceAllocation, type HourlySheetRow } from "@/lib/hourly-sheet";
 import { PortalError } from "@/lib/form";
-import { canPublishStatus, presentStatus, visibleStatus } from "@/lib/status-board";
+import { checklistIdFor, deriveChecklist, dsrStatusForEscalation, hourlyDedupeKey, isBlockedStatus, assertBlockerRemarks } from "@/lib/pmd-flow";
+import { assertCanEdit, assertHourlyWrite, type TabKey } from "@/lib/tab-access";
+import { latestStatus, presentStatus, statusIdentity, visibleStatus } from "@/lib/status-board";
 import { presentSow } from "@/lib/sow-board";
 import { ALL_PERMISSIONS, type PermissionKey } from "@/lib/permissions";
 import { nextInvoiceStatus, resolveBillRate } from "@/lib/metrics";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
+  ActivityItem,
+  ChecklistItem,
   Client,
   DirectoryUser,
   Escalation,
@@ -276,6 +280,58 @@ function mapEscalation(row: Row): Escalation {
     status: oneOf(row.status, ["open", "in_review", "resolved"] as const, "open"),
     createdBy: text(row.created_by),
     createdAt: text(row.created_at),
+    projectName: text(row.project_name),
+    sourceEntryId: text(row.source_entry_id),
+    resolutionNote: text(row.resolution_note),
+    updatedBy: text(row.updated_by),
+    updatedAt: text(row.updated_at),
+  };
+}
+
+function mapChecklist(row: Row): ChecklistItem {
+  return {
+    id: text(row.id),
+    sheetNo: num(row.sheet_no),
+    project: text(row.project_name),
+    sprint: text(row.sprint),
+    task: text(row.task),
+    resource: text(row.resource_name),
+    completedOn: text(row.completed_on).slice(0, 10),
+    status: text(row.status),
+    clientApproval: text(row.client_approval),
+    source: oneOf(row.source, ["auto", "manual", "upload"] as const, "auto"),
+    createdBy: text(row.created_by),
+    createdAt: text(row.created_at),
+    updatedBy: text(row.updated_by),
+    updatedAt: text(row.updated_at),
+  };
+}
+
+function mapActivity(row: Row): ActivityItem {
+  return {
+    id: text(row.id),
+    action: text(row.action),
+    entity: text(row.entity),
+    summary: text(row.summary),
+    actorName: text(row.actor_name) || "System",
+    createdAt: text(row.created_at),
+  };
+}
+
+function checklistRecord(item: ChecklistItem) {
+  return {
+    id: item.id,
+    sheet_no: item.sheetNo,
+    project_name: item.project,
+    sprint: item.sprint,
+    task: item.task,
+    resource_name: item.resource,
+    completed_on: item.completedOn || null,
+    status: item.status,
+    client_approval: item.clientApproval,
+    source: item.source,
+    created_by: item.createdBy && item.createdBy !== "system" ? item.createdBy : null,
+    updated_by: item.updatedBy && item.updatedBy !== "system" ? item.updatedBy : null,
   };
 }
 
@@ -401,8 +457,16 @@ async function loadPortal(user: SessionUser) {
       statusUpdates: presentStatusRows(asList(raw.status) as Record<string, unknown>[]),
       sowRecords: presentSowRows(asList(raw.sow) as Record<string, unknown>[]),
       hourlyEntries: presentHourlyRows(asList(raw.hourly) as Record<string, unknown>[], user),
+      checklistItems: (asList(raw.checklist) as Row[]).map(mapChecklist),
+      activity: (asList(raw.activity) as Row[]).map(mapActivity),
     };
   }
+  const [checklistRes, activityRes] = await Promise.all([
+    supabase.from("checklist_items").select("*").order("sheet_no"),
+    supabase.rpc("pmd_activity"),
+  ]);
+  const checklistItems = checklistRes.error ? [] : ((checklistRes.data ?? []) as Row[]).map(mapChecklist);
+  const activityRows = activityRes.error ? [] : ((activityRes.data ?? []) as Row[]);
   const [rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, costRes, escalationRes, fileRes, workstreamRes, studioRes, fxRates, statusUpdates, sowRecords, hourlyEntries] =
     await Promise.all([
       supabase.from("roles").select("id, name, slug, description, is_system, locked").order("name"),
@@ -422,7 +486,7 @@ async function loadPortal(user: SessionUser) {
       supabase.from("notifications").select("id, user_id, title, body, href, read, created_at").eq("user_id", user.id).order("created_at", { ascending: false }).limit(40),
       seeAudit ? supabase.from("audit_logs").select("id, actor_id, action, entity, entity_id, summary, created_at").order("created_at", { ascending: false }).limit(80) : skipped(),
       showCost ? supabase.rpc("staff_costs") : skipped(),
-      supabase.from("escalations").select("id, project_id, type, description, owner_name, due_date, status, created_by, created_at").order("created_at", { ascending: false }),
+      supabase.from("escalations").select("*").order("created_at", { ascending: false }),
       supabase.from("project_files").select("id, project_id, kind, file_name, created_by, created_at").order("created_at", { ascending: false }),
       supabase.from("workstreams").select("id, name, owner_name, target_date, status").order("name"),
       supabase.from("studio_settings").select("currency").eq("id", 1).maybeSingle(),
@@ -434,7 +498,22 @@ async function loadPortal(user: SessionUser) {
   for (const result of [rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, escalationRes, fileRes, workstreamRes, studioRes]) {
     raise(result.error);
   }
-  return { showCost, rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, costRes, escalationRes, fileRes, workstreamRes, studioRes, fxRates, statusUpdates, sowRecords, hourlyEntries };
+  const names = new Map(((profileRes.data ?? []) as Row[]).map((row) => [text(row.id), text(row.full_name)]));
+  const activity = activityRows.map((row) => mapActivity({ ...row, actor_name: names.get(text(row.actor_id)) || "System" }));
+  return { showCost, rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, costRes, escalationRes, fileRes, workstreamRes, studioRes, fxRates, statusUpdates, sowRecords, hourlyEntries, checklistItems, activity };
+}
+
+async function refreshChecklist(hourlyEntries: HourlyEntry[], current: ChecklistItem[]) {
+  const fresh = deriveChecklist(hourlyEntries, current, stamp());
+  if (!fresh.length) return current;
+  const writer = createServiceClient() ?? (await client());
+  const { error } = await writer.from("checklist_items").upsert(fresh.map(checklistRecord), { onConflict: "id", ignoreDuplicates: true });
+  if (!error) {
+    for (const item of fresh) {
+      await writer.from("audit_logs").insert({ actor_id: null, action: "checklist.auto", entity: "checklist", entity_id: item.id, summary: `${item.task} on ${item.project} is complete and was added to the delivery checklist.` });
+    }
+  }
+  return [...current, ...fresh];
 }
 
 function asList(value: unknown) {
@@ -469,8 +548,11 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
     statusUpdates: StatusUpdate[];
     sowRecords: SowRecord[];
     hourlyEntries: HourlyEntry[];
+    checklistItems: ChecklistItem[];
+    activity: ActivityItem[];
   } = await loadPortal(user);
-  const { showCost, rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, costRes, escalationRes, fileRes, workstreamRes, studioRes, fxRates, statusUpdates, sowRecords, hourlyEntries } = loaded;
+  const { showCost, rolesRes, grantRes, profileRes, clientRes, projectRes, memberRes, milestoneRes, featureRes, taskRes, timeRes, rateRes, invoiceRes, lineRes, paymentRes, noteRes, auditRes, costRes, escalationRes, fileRes, workstreamRes, studioRes, fxRates, statusUpdates, sowRecords, hourlyEntries, activity } = loaded;
+  const checklistItems = await refreshChecklist(hourlyEntries, loaded.checklistItems);
 
   const roles = (rolesRes.data ?? []).map(mapRole);
   const roleById = new Map(roles.map((role) => [role.id, role]));
@@ -563,13 +645,15 @@ export async function workspace(user: SessionUser): Promise<Workspace> {
       summary: text(row.summary),
       createdAt: text(row.created_at),
     })),
-    escalations: rows(escalationRes).map(mapEscalation).filter((item) => ids.has(item.projectId)),
+    escalations: rows(escalationRes).map(mapEscalation).map((item) => ({ ...item, projectName: item.projectName || projects.find((project) => project.id === item.projectId)?.name || "" })),
     files: rows(fileRes).map(mapFile).filter((item) => ids.has(item.projectId)),
     workstreams: rows(workstreamRes).map(mapWorkstream),
     fxRates,
     statusUpdates: visibleStatus(user, statusUpdates),
     sowRecords: visibleStatus(user, sowRecords),
     hourlyEntries,
+    checklistItems: [...checklistItems].sort((a, b) => a.sheetNo - b.sheetNo),
+    activity,
   };
 }
 
@@ -586,6 +670,11 @@ function statusFields(value: unknown) {
 function presentStatusRows(data: Record<string, unknown>[]) {
   return data.map((row) =>
     presentStatus({
+      id: text(row.id),
+      createdBy: text(row.created_by),
+      createdAt: text(row.created_at),
+      updatedBy: text(row.updated_by),
+      updatedAt: text(row.updated_at),
       sheetNo: num(row.sheet_no),
       project: text(row.project_name),
       subItem: text(row.sub_item),
@@ -611,11 +700,20 @@ function presentSowRows(data: Record<string, unknown>[]) {
     signedOn: text(row.signed_on),
     changeRequest: text(row.change_request),
     company: text(row.company),
+    createdBy: text(row.created_by),
+    createdAt: text(row.created_at),
+    updatedBy: text(row.updated_by),
+    updatedAt: text(row.updated_at),
   }));
 }
 
 function presentHourlyRows(data: Record<string, unknown>[], user: SessionUser): HourlyEntry[] {
   const mapped = data.map((row) => ({
+    blocker: text(row.blocker),
+    createdBy: text(row.created_by),
+    createdAt: text(row.created_at),
+    updatedBy: text(row.updated_by),
+    updatedAt: text(row.updated_at),
     id: text(row.id),
     userId: text(row.user_id),
     roleName: text(row.role_name),
@@ -638,9 +736,7 @@ function presentHourlyRows(data: Record<string, unknown>[], user: SessionUser): 
     approval: text(row.approval),
     notes: text(row.notes),
   }));
-  if (canUseHourlyTracker(user)) return mapped;
-  if (can(user, "projects.view") || can(user, "projects.view_all") || can(user, "tasks.view") || can(user, "tasks.manage")) return mapped.filter(isResourceAllocation);
-  return mapped.filter((row) => row.userId === user.id);
+  return visibleStatus(user, mapped);
 }
 
 function presentFxRows(data: Row[]) {
@@ -661,7 +757,7 @@ function ok(data: unknown): { data: Row[] | null; error: null } {
 async function statusBoard(supabase: SupabaseClient) {
   const full = await supabase
     .from("status_updates")
-    .select("sheet_no, project_name, sub_item, status, remarks, status_date, sheet_label, company, fields")
+    .select("*")
     .order("status_date", { ascending: false })
     .order("sheet_no");
   const data = full.error
@@ -677,11 +773,7 @@ async function statusBoard(supabase: SupabaseClient) {
 }
 
 async function hourlyBoard(supabase: SupabaseClient, user: SessionUser): Promise<HourlyEntry[]> {
-  const columns = "id, user_id, role_name, work_date, project_name, hours, notes, sheet_no, sprint, resource_name, task, status, company, est_start, est_end, estimated_hours, target_hours, actual_start, actual_end, actual_hours, approval";
-  const shared = canUseHourlyTracker(user) || can(user, "projects.view") || can(user, "projects.view_all") || can(user, "tasks.view") || can(user, "tasks.manage");
-  let query = supabase.from("hourly_entries").select(columns).order("sheet_no");
-  if (!shared) query = query.eq("user_id", user.id);
-  const chosen = await query;
+  const chosen = await supabase.from("hourly_entries").select("*").order("sheet_no");
   const data = chosen.error
     ? (await supabase.from("hourly_entries").select("id, user_id, role_name, work_date, project_name, hours, notes").eq("user_id", user.id).order("work_date", { ascending: false })).data
     : chosen.data;
@@ -689,7 +781,7 @@ async function hourlyBoard(supabase: SupabaseClient, user: SessionUser): Promise
 }
 
 async function sowBoard(supabase: SupabaseClient) {
-  const { data, error } = await supabase.from("sow_records").select("id, kind, sheet_no, project_name, sprint, link, signature, signed_on, change_request, company").order("sheet_no");
+  const { data, error } = await supabase.from("sow_records").select("*").order("sheet_no");
   if (error || !data) return [];
   return presentSowRows(data as Record<string, unknown>[]);
 }
@@ -1497,7 +1589,7 @@ async function ensureClient(user: SessionUser, name: string) {
   let inserted = await supabase.from("clients").insert(payload).select("id").single();
   if (inserted.error) {
     const admin = createServiceClient();
-    if (!admin || !canFileIntake(user)) throw new PortalError(inserted.error.message);
+    if (!admin) throw new PortalError(inserted.error.message);
     inserted = await admin.from("clients").insert(payload).select("id").single();
   }
   raise(inserted.error);
@@ -1559,7 +1651,7 @@ export async function clientDirectory(user: SessionUser) {
 }
 
 export async function organizations(user: SessionUser) {
-  if (!canFileIntake(user)) throw new PortalError("You cannot view organizations.");
+  assertCanEdit(user, "sowManagement");
   const supabase = await client();
   const { data, error } = await supabase.from("organizations").select("name, status").eq("status", "active").order("name");
   raise(error);
@@ -1567,7 +1659,7 @@ export async function organizations(user: SessionUser) {
 }
 
 export async function intakeOwners(user: SessionUser) {
-  if (!canFileIntake(user)) throw new PortalError("You cannot view intake owners.");
+  assertCanEdit(user, "sowManagement");
   const supabase = await client();
   const { data, error } = await supabase.from("profiles").select("id, full_name, status, roles(name, slug)").eq("status", "active");
   raise(error);
@@ -1582,14 +1674,14 @@ export async function intakeOwners(user: SessionUser) {
 }
 
 export async function submitIntake(user: SessionUser, input: IntakeRequest, files: File[]) {
-  if (!canFileIntake(user)) throw new PortalError("You cannot submit a project intake.");
+  assertCanEdit(user, "sowManagement");
   assertIntake(input, await organizations(user));
   const owners = await intakeOwners(user);
   const owner = owners.find((person) => person.id === input.ownerId);
   if (!owner) throw new PortalError("Choose an admin or a project owner.");
   const ownerId = owner.id;
   const clientId = await ensureClient(user, input.clientName);
-  const matched = clientForProfile(await clientDirectory(user), user);
+  const matched = canFileIntake(user) ? clientForProfile(await clientDirectory(user), user) : undefined;
   const initiated = matched ?? { name: user.fullName, email: user.email, billingEmail: "" };
   const supabase = await client();
   const defaults = sowDefaults();
@@ -1641,6 +1733,13 @@ export async function submitIntake(user: SessionUser, input: IntakeRequest, file
     if (file.size > 0) await storeProjectFile(user, data.id, "requirement", file);
   }
   await trail(user, "project.intake", "project", data.id, `Submitted intake ${input.name.trim()}.`);
+  const sows = await sowBoard(supabase);
+  const sheetNo = sows.filter((row) => row.kind === "status").reduce((max, row) => Math.max(max, row.sheetNo), 0) + 1;
+  const { error: sowError } = await supabase
+    .from("sow_records")
+    .insert({ ...sowPayload(presentSow({ id: crypto.randomUUID(), kind: "status", sheetNo, project: input.name.trim(), sprint: "", link: "", signature: "", signedOn: "", changeRequest: "", company: "" })), created_by: user.id, updated_by: user.id });
+  raise(sowError);
+  await trail(user, "sow.add", "sow", data.id, `Added ${input.name.trim()} to SOW status from the SOW requisition.`);
   await notifyIntake(user, ownerId, initiated, input.name.trim());
   return data.id as string;
 }
@@ -1667,8 +1766,8 @@ async function notifyIntake(user: SessionUser, ownerId: string, initiated: { nam
 }
 
 export async function saveSow(user: SessionUser, input: Project) {
+  assertCanEdit(user, "sowManagement");
   const existing = await visibleProject(user, input.id);
-  if (!canManageProject(user, existing) && !can(user, "projects.view_all")) throw new PortalError("You cannot finalise this SOW.");
   const supabase = await client();
   const { error } = await supabase
     .from("projects")
@@ -1700,8 +1799,8 @@ export async function saveSow(user: SessionUser, input: Project) {
 }
 
 export async function setDeliveryStatus(user: SessionUser, projectId: string, deliveryStatus: Project["deliveryStatus"]) {
+  assertCanEdit(user, "sowManagement");
   const project = await visibleProject(user, projectId);
-  if (!canManageProject(user, project) && !can(user, "projects.view_all")) throw new PortalError("You cannot change this project status.");
   const supabase = await client();
   const { error } = await supabase
     .from("projects")
@@ -1712,22 +1811,22 @@ export async function setDeliveryStatus(user: SessionUser, projectId: string, de
 }
 
 export async function uploadSowFile(user: SessionUser, projectId: string, file: File) {
+  assertCanEdit(user, "sowManagement");
   const project = await visibleProject(user, projectId);
-  if (!canManageProject(user, project) && !can(user, "projects.view_all")) throw new PortalError("You cannot attach a SOW.");
   if (!(file instanceof File) || file.size === 0) throw new PortalError("Choose a SOW PDF.");
   await storeProjectFile(user, projectId, "sow", file);
   await trail(user, "project.sow_file", "project", projectId, `Attached the SOW for ${project.name}.`);
 }
 
 export async function finaliseSow(user: SessionUser, projectId: string) {
+  assertCanEdit(user, "sowManagement");
   const project = await visibleProject(user, projectId);
-  if (!canManageProject(user, project) && !can(user, "projects.view_all")) throw new PortalError("You cannot finalise this SOW.");
   if (project.sowStage === "finalised") return;
   const supabase = await client();
   const { error } = await supabase.from("projects").update({ sow_stage: "finalised" }).eq("id", projectId);
   raise(error);
   await trail(user, "project.finalise", "project", projectId, `Finalised the SOW for ${project.name}.`);
-  await ping(project.ownerId, "SOW finalised", `${project.name} can now be staffed.`, "/resources");
+  await ping(project.ownerId, "SOW finalised", `${project.name} can now be staffed.`, "/utilization");
 }
 
 export async function activateProject(user: SessionUser, projectId: string) {
@@ -1770,64 +1869,153 @@ export async function saveDeliverySheet(
 
 export async function raiseEscalation(
   user: SessionUser,
-  input: { projectId: string; type: Escalation["type"]; description: string; ownerName: string; dueDate: string },
+  input: { projectId: string; projectName?: string; type: Escalation["type"]; description: string; ownerName: string; dueDate: string },
 ) {
-  const project = await visibleProject(user, input.projectId);
+  assertCanEdit(user, "escalations");
   if (!input.description.trim()) throw new PortalError("Describe the issue and the support needed.");
+  const projectId = input.projectId || (await projectIdForName(input.projectName ?? ""));
+  const project = projectId ? await visibleProject(user, projectId) : null;
+  const projectName = project?.name || (input.projectName ?? "").trim();
+  if (!projectName) throw new PortalError("Name the project this item belongs to.");
   const supabase = await client();
-  const { error } = await supabase.from("escalations").insert({
-    project_id: project.id,
-    type: input.type,
-    description: input.description.trim(),
-    owner_name: input.ownerName.trim() || user.fullName,
-    due_date: uuid(input.dueDate),
-    status: "open",
-    created_by: user.id,
-  });
+  const { data, error } = await supabase
+    .from("escalations")
+    .insert({
+      project_id: project?.id ?? null,
+      project_name: projectName,
+      type: input.type,
+      description: input.description.trim(),
+      owner_name: input.ownerName.trim() || user.fullName,
+      due_date: uuid(input.dueDate),
+      status: "open",
+      created_by: user.id,
+      updated_by: user.id,
+    })
+    .select("id")
+    .single();
   raise(error);
-  await trail(user, "escalation.raise", "project", project.id, `Raised a ${input.type} on ${project.name}.`);
-  await ping(project.ownerId, "Escalation raised", `${user.fullName} raised a ${input.type} on ${project.name}.`, "/escalations");
+  await trail(user, "escalation.raise", "escalation", text(data?.id), `Raised a ${input.type} on ${projectName}.`);
+  if (project) await ping(project.ownerId, "Escalation raised", `${user.fullName} raised a ${input.type} on ${project.name}.`, "/escalations");
+}
+
+async function projectIdForName(name: string) {
+  const wanted = name.trim().toLowerCase();
+  if (!wanted) return "";
+  const supabase = await client();
+  const { data } = await supabase.from("projects").select("id, name, code");
+  const found = (data ?? []).find((row) => text(row.name).trim().toLowerCase() === wanted || text(row.code).trim().toLowerCase() === wanted);
+  return found ? text(found.id) : "";
+}
+
+export async function saveEscalation(
+  user: SessionUser,
+  input: { id: string; status: Escalation["status"]; ownerName?: string; dueDate?: string; resolutionNote?: string },
+) {
+  assertCanEdit(user, "escalations");
+  const supabase = await client();
+  const { data, error } = await supabase.from("escalations").select("*").eq("id", input.id).maybeSingle();
+  raise(error);
+  if (!data) throw new PortalError("That escalation was not found.");
+  const item = mapEscalation(data as Row);
+  const patch: Row = { status: input.status, updated_by: user.id, updated_at: stamp() };
+  if (input.ownerName != null) patch.owner_name = input.ownerName.trim() || item.ownerName;
+  if (input.dueDate != null) patch.due_date = uuid(input.dueDate);
+  if (input.resolutionNote != null) patch.resolution_note = input.resolutionNote.trim();
+  const { error: updateError } = await supabase.from("escalations").update(patch).eq("id", input.id);
+  raise(updateError);
+  if (item.sourceEntryId) {
+    const { data: source } = await supabase.from("hourly_entries").select("status").eq("id", item.sourceEntryId).maybeSingle();
+    if (source) {
+      const next = dsrStatusForEscalation({ status: input.status }, text(source.status));
+      const { error: syncError } = await supabase.rpc("sync_escalation_source", { p_escalation: input.id, p_status: next });
+      raise(syncError);
+    }
+  }
+  await trail(user, "escalation.save", "escalation", input.id, `Set the escalation on ${item.projectName || "a project"} to ${input.status.replaceAll("_", " ")}.`);
 }
 
 export async function setEscalationStatus(user: SessionUser, id: string, status: Escalation["status"]) {
-  const supabase = await client();
-  const { data, error } = await supabase.from("escalations").select("id, project_id").eq("id", id).maybeSingle();
-  raise(error);
-  if (!data) throw new PortalError("That escalation was not found.");
-  await visibleProject(user, text(data.project_id));
-  if (!can(user, "projects.manage") && !can(user, "projects.view_all") && !can(user, "tasks.manage")) {
-    throw new PortalError("You cannot update that escalation.");
-  }
-  const { error: updateError } = await supabase.from("escalations").update({ status }).eq("id", id);
-  raise(updateError);
-  await trail(user, "escalation.status", "escalation", id, `Set escalation to ${status.replaceAll("_", " ")}.`);
+  return saveEscalation(user, { id, status });
+}
+
+function statusRecord(user: SessionUser, item: StatusUpdate) {
+  return {
+    sheet_no: item.sheetNo,
+    project_name: item.project,
+    sub_item: item.subItem,
+    status: item.status,
+    remarks: item.remarks,
+    status_date: item.statusDate,
+    sheet_label: item.sheetLabel || "",
+    company: item.company || "",
+    fields: item.fields ?? {},
+    updated_by: user.id,
+    updated_at: stamp(),
+  };
 }
 
 export async function saveStatusSheet(user: SessionUser, rows: StatusUpdate[]) {
-  if (!canPublishStatus(user)) throw new PortalError("Only GSVK SAI can upload the status sheet.");
+  assertCanEdit(user, "projectIntake");
   const supabase = await client();
-  const payload = rows.map((row) => {
-    const item = presentStatus(row);
-    return {
-      sheet_no: item.sheetNo,
-      project_name: item.project,
-      sub_item: item.subItem,
-      status: item.status,
-      remarks: item.remarks,
-      status_date: item.statusDate,
-      sheet_label: item.sheetLabel || "",
-      company: item.company || "",
-      fields: item.fields ?? {},
-    };
-  });
-  const { error: clearError } = await supabase.from("status_updates").delete().gte("sheet_no", 0);
-  raise(clearError);
-  for (let index = 0; index < payload.length; index += 400) {
-    const { error } = await supabase.from("status_updates").insert(payload.slice(index, index + 400));
+  const existing = await statusBoard(supabase);
+  const known = new Set(existing.map((row) => `${row.project}\u0000${row.subItem}\u0000${row.statusDate}`));
+  const payload = rows.map((row) => presentStatus(row)).filter((item) => item.project && item.statusDate);
+  const isNew = (item: StatusUpdate) => !known.has(`${item.project}\u0000${item.subItem}\u0000${item.statusDate}`);
+  const additions = payload.filter(isNew).map((item) => ({ ...statusRecord(user, item), created_by: user.id }));
+  const changes = payload.filter((item) => !isNew(item)).map((item) => statusRecord(user, item));
+  for (let index = 0; index < additions.length; index += 400) {
+    const { error } = await supabase.from("status_updates").insert(additions.slice(index, index + 400));
     raise(error);
   }
-  await trail(user, "status.upload", "status_sheet", "status", `Replaced the status history with ${rows.length} ${rows.length === 1 ? "row" : "rows"}.`);
-  return rows.length;
+  for (let index = 0; index < changes.length; index += 400) {
+    const { error } = await supabase.from("status_updates").upsert(changes.slice(index, index + 400), { onConflict: "project_name,sub_item,status_date" });
+    raise(error);
+  }
+  const fresh = additions.length;
+  const updated = changes.length;
+  await trail(user, "status.upload", "status_sheet", "status", `Added ${fresh} and updated ${updated} project status ${payload.length === 1 ? "row" : "rows"}.`);
+  return { added: fresh, skipped: rows.length - payload.length, updated };
+}
+
+export async function saveStatusEntry(user: SessionUser, input: StatusUpdate) {
+  assertCanEdit(user, "projectIntake");
+  if (!input.project.trim()) throw new PortalError("Project is required.");
+  if (!input.subItem.trim() && !input.remarks.trim()) throw new PortalError("Add an item or the task remarks.");
+  const supabase = await client();
+  const current = await statusBoard(supabase);
+  const existing = input.id ? current.find((row) => row.id === input.id) : undefined;
+  if (input.id && !existing) throw new PortalError("That status row was not found.");
+  const statusDate = existing?.statusDate || input.statusDate || latestStatus(current).date || todayIso();
+  const sameProject = current.find((row) => row.project.trim().toLowerCase() === input.project.trim().toLowerCase() && row.sheetNo);
+  const item = presentStatus({
+    ...input,
+    project: input.project.trim(),
+    subItem: input.subItem.trim(),
+    status: input.status.trim(),
+    statusDate,
+    sheetNo: input.sheetNo || existing?.sheetNo || sameProject?.sheetNo || current.reduce((max, row) => Math.max(max, row.sheetNo), 0) + 1,
+    company: input.company?.trim() || existing?.company || sameProject?.company || "",
+    fields: existing?.fields,
+  });
+  if (existing) {
+    const { error } = await supabase.from("status_updates").update(statusRecord(user, item)).eq("id", existing.id ?? "");
+    if (error?.code === "23505") throw new PortalError("That item is already on this status sheet. Edit the existing row instead.");
+    raise(error);
+  } else {
+    const { error } = await supabase.from("status_updates").insert({ ...statusRecord(user, item), created_by: user.id });
+    if (error?.code === "23505") throw new PortalError("That item is already on this status sheet. Edit the existing row instead.");
+    raise(error);
+  }
+  await trail(user, "status.save", "status_sheet", existing?.id || statusIdentity(item), `Saved ${item.project}${item.subItem ? ` · ${item.subItem}` : ""} as ${item.status || "no status"}.`);
+}
+
+export async function deleteStatusEntry(user: SessionUser, id: string) {
+  assertCanEdit(user, "projectIntake");
+  const supabase = await client();
+  const { data, error } = await supabase.from("status_updates").delete().eq("id", id).select("project_name, sub_item");
+  raise(error);
+  if (!data?.length) throw new PortalError("That status row was not found.");
+  await trail(user, "status.delete", "status_sheet", id, `Removed ${text(data[0].project_name)}${text(data[0].sub_item) ? ` · ${text(data[0].sub_item)}` : ""} from the status sheet.`);
 }
 
 function sowPayload(row: SowRecord) {
@@ -1846,47 +2034,188 @@ function sowPayload(row: SowRecord) {
   };
 }
 
+function sowKey(row: SowRecord) {
+  return `${row.kind}|${row.project.trim().toLowerCase()}|${row.sprint.trim().toLowerCase()}`;
+}
+
 export async function saveSowSheet(user: SessionUser, rows: SowRecord[]) {
-  if (!canPublishStatus(user)) throw new PortalError("Only the admin can update the SOW status.");
+  assertCanEdit(user, "sowManagement");
   const supabase = await client();
-  const incoming = rows.map(presentSow);
-  const kinds = [...new Set(incoming.map((row) => row.kind))];
-  if (kinds.length) {
-    const { error } = await supabase.from("sow_records").delete().in("kind", kinds);
+  const current = await sowBoard(supabase);
+  const byKey = new Map(current.map((row) => [sowKey(row), row]));
+  const ids = new Set(current.map((row) => row.id));
+  let added = 0;
+  let updated = 0;
+  for (const raw of rows.map(presentSow)) {
+    const previous = byKey.get(sowKey(raw));
+    if (!previous) {
+      const id = ids.has(raw.id) ? crypto.randomUUID() : raw.id;
+      ids.add(id);
+      const sheetNo = current.some((row) => row.kind === raw.kind && row.sheetNo === raw.sheetNo)
+        ? current.filter((row) => row.kind === raw.kind).reduce((max, row) => Math.max(max, row.sheetNo), 0) + 1 + added
+        : raw.sheetNo;
+      const { error } = await supabase.from("sow_records").insert({ ...sowPayload({ ...raw, id, sheetNo }), created_by: user.id, updated_by: user.id });
+      raise(error);
+      byKey.set(sowKey(raw), { ...raw, id, sheetNo });
+      added += 1;
+      continue;
+    }
+    const patch = {
+      link: raw.link || previous.link,
+      signature: raw.signature || previous.signature,
+      signed_on: raw.signedOn || previous.signedOn,
+      change_request: raw.changeRequest || previous.changeRequest,
+    };
+    if (patch.link === previous.link && patch.signature === previous.signature && patch.signed_on === previous.signedOn && patch.change_request === previous.changeRequest) continue;
+    const { error } = await supabase.from("sow_records").update({ ...patch, updated_by: user.id, updated_at: stamp() }).eq("id", previous.id);
     raise(error);
+    updated += 1;
   }
-  for (let index = 0; index < incoming.length; index += 400) {
-    const { error } = await supabase.from("sow_records").insert(incoming.slice(index, index + 400).map(sowPayload));
-    raise(error);
-  }
-  await trail(user, "sow.upload", "sow", "status", `Updated ${incoming.length} SOW ${incoming.length === 1 ? "row" : "rows"}.`);
-  return incoming.length;
+  await trail(user, "sow.upload", "sow", "status", `Added ${added} and updated ${updated} SOW ${added + updated === 1 ? "row" : "rows"}.`);
+  return { added, skipped: rows.length - added - updated, updated };
 }
 
 export async function saveSowRecord(user: SessionUser, input: SowRecord) {
-  if (!canPublishStatus(user)) throw new PortalError("Only the admin can update the SOW status.");
+  assertCanEdit(user, "sowManagement");
+  if (!input.project.trim()) throw new PortalError("Project is required.");
   const supabase = await client();
-  const item = presentSow(input);
-  const { error } = await supabase.from("sow_records").update({
-    sprint: item.sprint,
-    link: item.link,
-    signature: item.signature,
-    signed_on: item.signedOn,
-    change_request: item.changeRequest,
-  }).eq("id", item.id);
+  if (input.id) {
+    const item = presentSow(input);
+    const { data, error } = await supabase
+      .from("sow_records")
+      .update({
+        ...(input.sheetNo ? { sheet_no: item.sheetNo } : {}),
+        project_name: item.project,
+        sprint: item.sprint,
+        link: item.link,
+        signature: item.signature,
+        signed_on: item.signedOn,
+        change_request: item.changeRequest,
+        updated_by: user.id,
+        updated_at: stamp(),
+      })
+      .eq("id", item.id)
+      .select("id");
+    raise(error);
+    if (!data?.length) throw new PortalError("That SOW row was not found.");
+    await trail(user, "sow.edit", "sow", item.id, `Updated the SOW for ${item.project}.`);
+    return;
+  }
+  const current = await sowBoard(supabase);
+  const sheetNo = input.sheetNo || current.filter((row) => row.kind === input.kind).reduce((max, row) => Math.max(max, row.sheetNo), 0) + 1;
+  const item = presentSow({ ...input, id: crypto.randomUUID(), sheetNo });
+  const { error } = await supabase.from("sow_records").insert({ ...sowPayload(item), created_by: user.id, updated_by: user.id });
   raise(error);
-  await trail(user, "sow.edit", "sow", item.id, `Updated the SOW for ${item.project}.`);
+  await trail(user, "sow.add", "sow", item.id, `Added the SOW ${item.kind === "bid" ? "bid" : "row"} for ${item.project}.`);
+}
+
+export async function deleteSowRecord(user: SessionUser, id: string) {
+  assertCanEdit(user, "sowManagement");
+  const supabase = await client();
+  const { data, error } = await supabase.from("sow_records").delete().eq("id", id).select("project_name");
+  raise(error);
+  if (!data?.length) throw new PortalError("That SOW row was not found.");
+  await trail(user, "sow.delete", "sow", id, `Removed the SOW row for ${text(data[0].project_name)}.`);
+}
+
+export async function saveChecklistItem(user: SessionUser, input: ChecklistItem) {
+  assertCanEdit(user, "deliveryChecklist");
+  if (!input.project.trim() || !input.task.trim()) throw new PortalError("Project and task are required.");
+  const supabase = await client();
+  const { data: rowsNow, error: readError } = await supabase.from("checklist_items").select("id, sheet_no");
+  raise(readError);
+  const existing = input.id ? (rowsNow ?? []).find((row) => text(row.id) === input.id) : undefined;
+  if (input.id && !existing) throw new PortalError("That checklist row was not found.");
+  const id = input.id || checklistIdFor(input.project, input.task);
+  if (!input.id && (rowsNow ?? []).some((row) => text(row.id) === id)) throw new PortalError("That task is already on the checklist. Edit the existing row instead.");
+  const item: ChecklistItem = {
+    ...input,
+    id,
+    project: input.project.trim(),
+    task: input.task.trim(),
+    sheetNo: existing ? num(existing.sheet_no) : (rowsNow ?? []).reduce((max, row) => Math.max(max, num(row.sheet_no)), 0) + 1,
+    source: existing ? input.source : "manual",
+    updatedBy: user.id,
+  };
+  const record = checklistRecord(item);
+  if (existing) {
+    const { source, created_by, ...patch } = record;
+    void source;
+    void created_by;
+    const { error } = await supabase.from("checklist_items").update({ ...patch, updated_at: stamp() }).eq("id", id);
+    raise(error);
+  } else {
+    const { error } = await supabase.from("checklist_items").insert({ ...record, created_by: user.id });
+    raise(error);
+  }
+  const { data: changed, error: approvalError } = await supabase.rpc("apply_checklist_approval", { p_project: item.project, p_task: item.task, p_approval: item.clientApproval });
+  raise(approvalError);
+  const count = Number(changed ?? 0);
+  await trail(user, "checklist.save", "checklist", id, `Saved ${item.task} on ${item.project}${item.clientApproval ? ` (client approval: ${item.clientApproval})` : ""}.${count ? ` Updated ${count} allocation ${count === 1 ? "row" : "rows"}.` : ""}`);
+}
+
+export async function deleteChecklistItem(user: SessionUser, id: string) {
+  assertCanEdit(user, "deliveryChecklist");
+  const supabase = await client();
+  const { data, error } = await supabase.from("checklist_items").delete().eq("id", id).select("task, project_name");
+  raise(error);
+  if (!data?.length) throw new PortalError("That checklist row was not found.");
+  await trail(user, "checklist.delete", "checklist", id, `Removed ${text(data[0].task)} on ${text(data[0].project_name)} from the checklist.`);
+}
+
+export async function saveChecklistSheet(user: SessionUser, rows: HourlySheetRow[]) {
+  assertCanEdit(user, "deliveryChecklist");
+  const usable = rows.filter((row) => row.project.trim() && row.task.trim());
+  if (!usable.length) throw new PortalError("That file has no checklist rows. Include Project, Task, Date of completion, Status, and Client Approval.");
+  const supabase = await client();
+  const { data: rowsNow, error: readError } = await supabase.from("checklist_items").select("id, sheet_no, completed_on");
+  raise(readError);
+  const known = new Map((rowsNow ?? []).map((row) => [text(row.id), row]));
+  let next = (rowsNow ?? []).reduce((max, row) => Math.max(max, num(row.sheet_no)), 0);
+  let added = 0;
+  let updated = 0;
+  for (const row of usable) {
+    const id = checklistIdFor(row.project, row.task);
+    const previous = known.get(id);
+    const fields = {
+      project_name: row.project.trim(),
+      sprint: row.sprint.trim(),
+      task: row.task.trim(),
+      resource_name: row.resource.trim(),
+      completed_on: row.workDate || row.actualEnd || (previous ? text(previous.completed_on) || null : null),
+      status: row.status.trim() || "Completed",
+      client_approval: row.approval.trim(),
+      updated_by: user.id,
+      updated_at: stamp(),
+    };
+    if (previous) {
+      const { error } = await supabase.from("checklist_items").update(fields).eq("id", id);
+      raise(error);
+      updated += 1;
+    } else {
+      next += 1;
+      const { error } = await supabase.from("checklist_items").insert({ ...fields, id, sheet_no: row.sheetNo || next, source: "upload", created_by: user.id });
+      raise(error);
+      known.set(id, { id, sheet_no: next, completed_on: fields.completed_on });
+      added += 1;
+    }
+    const { error: approvalError } = await supabase.rpc("apply_checklist_approval", { p_project: fields.project_name, p_task: fields.task, p_approval: fields.client_approval });
+    raise(approvalError);
+  }
+  await trail(user, "checklist.upload", "checklist", "sheet", `Added ${added} and updated ${updated} checklist ${added + updated === 1 ? "row" : "rows"}.`);
+  return { added, skipped: rows.length - usable.length, updated };
 }
 
 export async function saveWorkstream(user: SessionUser, input: { id: string; ownerName: string; targetDate: string; status: Workstream["status"] }) {
-  if (!can(user, "projects.manage") && !can(user, "projects.view_all")) throw new PortalError("You cannot update workstreams.");
+  assertCanEdit(user, "escalations");
   const supabase = await client();
   const { error } = await supabase.from("workstreams").update({ owner_name: input.ownerName, target_date: uuid(input.targetDate), status: input.status }).eq("id", input.id);
   raise(error);
 }
 
 function hourlyRecord(user: SessionUser, row: HourlySheetRow) {
-  if (row.hours < 0 || row.hours > 24) throw new PortalError("Hours Spent must be from 0 to 24.");
+  if (row.hours < 0 || (!isResourceAllocation(row) && row.hours > 24)) throw new PortalError("Hours Spent must be from 0 to 24.");
+  if (!row.project.trim()) throw new PortalError("Project is required.");
   if (!row.workDate && !row.task && !row.project) throw new PortalError("Each row needs a project or a task.");
   const day = (value: string) => value || null;
   return {
@@ -1910,46 +2239,139 @@ function hourlyRecord(user: SessionUser, row: HourlySheetRow) {
     actual_hours: row.actualHours,
     approval: row.approval.trim(),
     notes: (row.task || row.notes).trim(),
+    blocker: (row.blocker ?? "").trim(),
+    updated_by: user.id,
   };
 }
 
+function hourlyTab(row: { estimatedHours?: number | null; targetHours?: number | null; estStart?: string }): TabKey {
+  return isResourceAllocation(row) ? "utilization" : "dsrHourlyTracker";
+}
+
+async function existingHourlyKeys(supabase: SupabaseClient) {
+  const { data, error } = await supabase.from("hourly_entries").select("project_name, resource_name, task, sprint, work_date, hours, est_start, estimated_hours, target_hours");
+  raise(error);
+  return new Set(
+    ((data ?? []) as Row[]).map((row) =>
+      hourlyDedupeKey({
+        project: text(row.project_name),
+        resource: text(row.resource_name),
+        task: text(row.task),
+        sprint: text(row.sprint),
+        workDate: text(row.work_date).slice(0, 10),
+        hours: num(row.hours),
+        estStart: text(row.est_start).slice(0, 10),
+        estimatedHours: row.estimated_hours == null ? null : num(row.estimated_hours),
+        targetHours: row.target_hours == null ? null : num(row.target_hours),
+      }),
+    ),
+  );
+}
+
+function rowKey(row: HourlySheetRow) {
+  return hourlyDedupeKey({ ...row, task: row.task || row.notes });
+}
+
+async function syncCloudBlocker(user: SessionUser, entry: { id: string; project: string; task: string; resource: string; workDate: string; status: string; blocker: string }) {
+  const supabase = await client();
+  const { data: existing } = await supabase.from("escalations").select("id, status, resolution_note").eq("source_entry_id", entry.id).maybeSingle();
+  const description = `${entry.task || "Task"}${entry.resource ? ` (${entry.resource})` : ""}${entry.workDate ? ` on ${entry.workDate}` : ""}: ${entry.blocker}`;
+  if (isBlockedStatus(entry.status)) {
+    if (existing) {
+      const reopened = text(existing.status) === "resolved";
+      const { error } = await supabase
+        .from("escalations")
+        .update({ description, project_name: entry.project, status: reopened ? "open" : text(existing.status), updated_by: user.id, updated_at: stamp() })
+        .eq("id", text(existing.id));
+      raise(error);
+      if (reopened) await trail(user, "escalation.auto", "escalation", text(existing.id), `Blocked again: ${entry.task || "task"} on ${entry.project}.`);
+      return;
+    }
+    const projectId = await projectIdForName(entry.project);
+    const { data, error } = await supabase
+      .from("escalations")
+      .insert({
+        project_id: projectId || null,
+        project_name: entry.project,
+        type: "blocker",
+        description,
+        owner_name: entry.resource || user.fullName,
+        status: "open",
+        created_by: user.id,
+        updated_by: user.id,
+        source_entry_id: entry.id,
+      })
+      .select("id")
+      .single();
+    raise(error);
+    await trail(user, "escalation.auto", "escalation", text(data?.id), `Blocked: ${entry.task || "task"} on ${entry.project}. ${entry.blocker}`.trim());
+    return;
+  }
+  if (existing && text(existing.status) !== "resolved") {
+    const { error } = await supabase
+      .from("escalations")
+      .update({ status: "resolved", resolution_note: text(existing.resolution_note) || "Unblocked on the hourly tracker.", updated_by: user.id, updated_at: stamp() })
+      .eq("id", text(existing.id));
+    raise(error);
+    await trail(user, "escalation.resolve", "escalation", text(existing.id), `Unblocked ${entry.task || "task"} on ${entry.project}.`);
+  }
+}
+
 export async function saveAllocationSheet(user: SessionUser, rows: HourlySheetRow[]) {
-  if (!canUseHourlyTracker(user)) throw new PortalError("You cannot upload resource allocation.");
+  assertCanEdit(user, "utilization");
   const plan = hourlyRowsForUser(rows, user).filter(isResourceAllocation);
   if (!plan.length) throw new PortalError("That file has no resource allocation rows. Use the plan sheet with Estimated Hours.");
-  const incoming = plan.map((row) => hourlyRecord(user, { ...row, hours: Math.min(24, Math.max(0, row.hours)) }));
   const supabase = await client();
-  const replaced = await supabase.rpc("replace_resource_allocation", { payload: incoming });
-  if (!replaced.error) {
-    await trail(user, "allocation.upload", "hourly", user.id, `Uploaded ${incoming.length} resource allocation ${incoming.length === 1 ? "row" : "rows"}.`);
-    return Number(replaced.data ?? incoming.length);
+  const known = await existingHourlyKeys(supabase);
+  const fresh = plan.filter((row) => {
+    const key = rowKey(row);
+    if (known.has(key)) return false;
+    known.add(key);
+    return true;
+  });
+  const incoming = fresh.map((row) => ({ ...hourlyRecord(user, { ...row, hours: Math.min(24, Math.max(0, row.hours)) }), created_by: user.id }));
+  for (let index = 0; index < incoming.length; index += 400) {
+    const { error } = await supabase.from("hourly_entries").insert(incoming.slice(index, index + 400));
+    raise(error);
   }
-  const { error: clearError } = await supabase.from("hourly_entries").delete().eq("user_id", user.id).or("estimated_hours.not.is.null,target_hours.not.is.null,est_start.not.is.null");
-  raise(clearError);
-  const { error } = await supabase.from("hourly_entries").insert(incoming);
-  raise(error);
-  await trail(user, "allocation.upload", "hourly", user.id, `Uploaded ${incoming.length} resource allocation ${incoming.length === 1 ? "row" : "rows"}.`);
-  return incoming.length;
+  await trail(user, "allocation.upload", "hourly", user.id, `Added ${incoming.length} resource allocation ${incoming.length === 1 ? "row" : "rows"}.`);
+  return { added: incoming.length, skipped: plan.length - incoming.length };
 }
 
 export async function saveHourlySheet(user: SessionUser, rows: HourlySheetRow[]) {
-  if (!canUseHourlyTracker(user)) throw new PortalError("You cannot upload an hourly tracker.");
+  assertCanEdit(user, "dsrHourlyTracker");
   const logs = hourlyRowsForUser(rows, user).filter((row) => !isResourceAllocation(row));
   if (!logs.length) throw new PortalError("That file has no hourly rows. Use the sheet with Date and Hours Spent.");
-  const incoming = logs.map((row) => hourlyRecord(user, row));
   const supabase = await client();
-  const { error: clearError } = await supabase.from("hourly_entries").delete().eq("user_id", user.id).is("estimated_hours", null).is("target_hours", null).is("est_start", null);
-  raise(clearError);
-  if (incoming.length) {
-    const { error } = await supabase.from("hourly_entries").insert(incoming);
+  const known = await existingHourlyKeys(supabase);
+  const fresh = logs.filter((row) => {
+    const key = rowKey(row);
+    if (known.has(key)) return false;
+    known.add(key);
+    return true;
+  });
+  const incoming = fresh.map((row) => ({ ...hourlyRecord(user, row), created_by: user.id }));
+  for (let index = 0; index < incoming.length; index += 400) {
+    const { data, error } = await supabase.from("hourly_entries").insert(incoming.slice(index, index + 400)).select("id, project_name, task, resource_name, work_date, status, blocker");
     raise(error);
+    for (const row of (data ?? []) as Row[]) {
+      if (!isBlockedStatus(text(row.status))) continue;
+      await syncCloudBlocker(user, { id: text(row.id), project: text(row.project_name), task: text(row.task), resource: text(row.resource_name), workDate: text(row.work_date).slice(0, 10), status: text(row.status), blocker: text(row.blocker) });
+    }
   }
-  await trail(user, "hourly.upload", "hourly", user.id, `Uploaded ${incoming.length} hourly ${incoming.length === 1 ? "row" : "rows"} for ${user.roleName}.`);
-  return incoming.length;
+  await trail(user, "hourly.upload", "hourly", user.id, `Added ${incoming.length} hourly ${incoming.length === 1 ? "row" : "rows"}.`);
+  return { added: incoming.length, skipped: logs.length - incoming.length };
 }
 
 export async function saveHourlyEntry(user: SessionUser, input: HourlyEntry) {
-  if (!canUseHourlyTracker(user)) throw new PortalError("You cannot update the hourly tracker.");
+  const tab = hourlyTab(input);
+  assertHourlyWrite(user, { plan: tab === "utilization" });
+  if (tab === "dsrHourlyTracker") assertBlockerRemarks({ status: input.status, blocker: input.blocker });
+  if (input.id) {
+    const lookup = await client();
+    const { data: current } = await lookup.from("hourly_entries").select("user_id").eq("id", input.id).maybeSingle();
+    if (current) assertHourlyWrite(user, { plan: tab === "utilization", ownerId: text(current.user_id) });
+  }
   const payload = hourlyRecord(user, {
     sheetNo: input.sheetNo,
     project: input.project,
@@ -1971,26 +2393,47 @@ export async function saveHourlyEntry(user: SessionUser, input: HourlyEntry) {
     notes: input.task || input.notes,
     role: "",
     person: input.resource,
+    blocker: input.blocker ?? "",
   });
   const supabase = await client();
+  let id = input.id;
   if (input.id) {
-    const { data, error } = await supabase.from("hourly_entries").update(payload).eq("id", input.id).eq("user_id", user.id).select("id");
+    const { user_id, role_name, ...patch } = payload;
+    void user_id;
+    void role_name;
+    const { data, error } = await supabase.from("hourly_entries").update({ ...patch, updated_at: stamp() }).eq("id", input.id).select("id");
     raise(error);
     if (!data?.length) throw new PortalError("That hourly row was not found.");
   } else {
-    const { error } = await supabase.from("hourly_entries").insert(payload);
+    const { data, error } = await supabase.from("hourly_entries").insert({ ...payload, created_by: user.id }).select("id").single();
     raise(error);
+    id = text(data?.id);
   }
-  await trail(user, "hourly.save", "hourly", input.id, `Saved ${payload.hours}h on ${payload.work_date}.`);
+  if (tab === "dsrHourlyTracker" && id) {
+    await syncCloudBlocker(user, { id, project: payload.project_name, task: payload.task, resource: payload.resource_name, workDate: payload.work_date ?? "", status: payload.status, blocker: payload.blocker });
+  }
+  const plan = tab === "utilization";
+  await trail(user, plan ? "allocation.save" : "hourly.save", "hourly", id, plan ? `Saved allocation for ${payload.task || payload.project_name}.` : `Saved ${payload.hours}h on ${payload.project_name}${payload.work_date ? ` (${payload.work_date})` : ""}.`);
 }
 
 export async function deleteHourlyEntry(user: SessionUser, id: string) {
-  if (!canUseHourlyTracker(user)) throw new PortalError("You cannot update the hourly tracker.");
   const supabase = await client();
-  const { data, error } = await supabase.from("hourly_entries").delete().eq("id", id).eq("user_id", user.id).select("id");
+  const { data: found, error: readError } = await supabase.from("hourly_entries").select("id, user_id, estimated_hours, target_hours, est_start").eq("id", id).maybeSingle();
+  raise(readError);
+  if (!found) throw new PortalError("That hourly row was not found.");
+  const plan = found.estimated_hours != null || found.target_hours != null || Boolean(found.est_start);
+  assertHourlyWrite(user, { plan, ownerId: text(found.user_id) });
+  if (!plan) {
+    await supabase
+      .from("escalations")
+      .update({ status: "resolved", resolution_note: "The hourly row was removed.", updated_by: user.id, updated_at: stamp() })
+      .eq("source_entry_id", id)
+      .neq("status", "resolved");
+  }
+  const { data, error } = await supabase.from("hourly_entries").delete().eq("id", id).select("id");
   raise(error);
   if (!data?.length) throw new PortalError("That hourly row was not found.");
-  await trail(user, "hourly.delete", "hourly", id, "Removed an hourly row.");
+  await trail(user, plan ? "allocation.delete" : "hourly.delete", "hourly", id, plan ? "Removed an allocation row." : "Removed an hourly row.");
 }
 
 export async function projectFile(user: SessionUser, id: string): Promise<{ name: string; type: string; bytes: Uint8Array }> {

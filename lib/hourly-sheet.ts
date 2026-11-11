@@ -23,7 +23,10 @@ export type HourlySheetRow = {
   notes: string;
   role: string;
   person: string;
+  blocker?: string;
 };
+
+export type HourlyRowError = { row: number; message: string };
 
 function pad(value: number) {
   return String(value).padStart(2, "0");
@@ -78,7 +81,8 @@ function headerKey(value: unknown) {
   if (name === "sprint") return "sprint";
   if (name === "resource" || name === "person" || name === "employee" || name === "name") return "resource";
   if (name === "task" || name.endsWith("task")) return "task";
-  if (name === "date" || name === "workdate" || name === "day") return "date";
+  if (name === "date" || name === "workdate" || name === "day" || name === "dateofcompletion" || name === "completiondate" || name === "completedon") return "date";
+  if (name === "blocker" || name === "blockers" || name === "blockerremarks") return "blocker";
   if (name === "eststartdate" || name === "estimatedstartdate") return "estStart";
   if (name === "estenddate" || name === "estimatedenddate") return "estEnd";
   if (name === "estimatedhours") return "estimatedHours";
@@ -89,7 +93,7 @@ function headerKey(value: unknown) {
   if (name === "hoursspent" || name === "hours" || name === "hour" || name === "hrs" || name === "hr") return "hours";
   if (name === "status") return "status";
   if (name === "company" || name === "comapny") return "company";
-  if (name === "approval" || name === "aproval") return "approval";
+  if (name === "approval" || name === "aproval" || name === "clientapproval" || name === "clientaproval") return "approval";
   if (name.includes("note") || name.includes("remark") || name.includes("description")) return "notes";
   if (name === "role" || name === "designation") return "role";
   return "";
@@ -139,6 +143,7 @@ export function presentHourlyEntry<T extends HourlySheetRow>(row: T): T {
     actualEnd: row.actualEnd || "",
     actualHours: row.actualHours ?? null,
     approval: row.approval || "",
+    blocker: row.blocker || "",
   };
 }
 
@@ -151,6 +156,12 @@ export function hourlySheetLayout(rows: { estStart?: string; estEnd?: string; es
 }
 
 export function parseHourlySheet(bytes: Buffer, filename: string) {
+  const report = parseHourlySheetReport(bytes, filename);
+  if (!report.rows.length) throw new PortalError(report.errors[0] ? `Row ${report.errors[0].row}: ${report.errors[0].message}` : "That file has no hourly rows.");
+  return report.rows;
+}
+
+export function parseHourlySheetReport(bytes: Buffer, filename: string) {
   const csv = filename.toLowerCase().endsWith(".csv");
   const workbook = csv
     ? XLSX.read(bytes.toString("utf8"), { type: "string", cellDates: true })
@@ -174,7 +185,9 @@ export function parseHourlySheet(bytes: Buffer, filename: string) {
   }
   if (headerAt < 0) throw new PortalError("The sheet needs Project and Hours Spent, or the utilization columns.");
   const rows: HourlySheetRow[] = [];
-  for (const line of matrix.slice(headerAt + 1)) {
+  const errors: HourlyRowError[] = [];
+  for (const [offset, line] of matrix.slice(headerAt + 1).entries()) {
+    const rowNumber = headerAt + offset + 2;
     const textAt = (key: string) => (columns[key] == null ? "" : cellText(line[columns[key]]));
     const dateAt = (key: string) => (columns[key] == null ? "" : asDate(line[columns[key]]));
     const hoursAt = (key: string) => (columns[key] == null ? null : asHours(line[columns[key]]));
@@ -186,7 +199,20 @@ export function parseHourlySheet(bytes: Buffer, filename: string) {
     const actualHours = hoursAt("actualHours");
     const hours = spent ?? actualHours ?? 0;
     if (!project && !task && !resource && !workDate) continue;
-    if (spent != null && spent > 24) throw new PortalError("Hours Spent must be from 0 to 24.");
+    const status = textAt("status");
+    const blocker = textAt("blocker");
+    if (!project) {
+      errors.push({ row: rowNumber, message: "Project is missing" });
+      continue;
+    }
+    if (spent != null && (spent < 0 || spent > 24)) {
+      errors.push({ row: rowNumber, message: "Hours Spent must be from 0 to 24" });
+      continue;
+    }
+    if (/\bblock/i.test(status) && !blocker) {
+      errors.push({ row: rowNumber, message: "Blocked rows need blocker remarks" });
+      continue;
+    }
     rows.push({
       sheetNo: Number(textAt("sheetNo")) || 0,
       project,
@@ -195,7 +221,7 @@ export function parseHourlySheet(bytes: Buffer, filename: string) {
       task,
       workDate,
       hours,
-      status: textAt("status"),
+      status,
       company: textAt("company"),
       estStart: dateAt("estStart"),
       estEnd: dateAt("estEnd"),
@@ -208,8 +234,9 @@ export function parseHourlySheet(bytes: Buffer, filename: string) {
       notes: task,
       role: textAt("role"),
       person: resource,
+      blocker,
     });
   }
-  if (!rows.length) throw new PortalError("That file has no hourly rows.");
-  return rows;
+  if (!rows.length && !errors.length) throw new PortalError("That file has no hourly rows.");
+  return { rows, errors };
 }

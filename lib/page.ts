@@ -3,6 +3,7 @@ import { canAny } from "@/lib/access";
 import { loadWorkspace } from "@/lib/data";
 import type { PermissionKey } from "@/lib/permissions";
 import { getSession } from "@/lib/session";
+import { canEditTab, type TabKey } from "@/lib/tab-access";
 import type { Workspace } from "@/lib/types";
 
 export async function requirePage(permissions: PermissionKey[]) {
@@ -10,6 +11,13 @@ export async function requirePage(permissions: PermissionKey[]) {
   if (!user) redirect("/login");
   const data = await loadWorkspace(user.id);
   return { user, data, allowed: canAny(user, permissions) };
+}
+
+export async function requireTab(tab: TabKey) {
+  const user = await getSession();
+  if (!user) redirect("/login");
+  const data = await loadWorkspace(user.id);
+  return { user, data, allowed: canEditTab(user, tab) };
 }
 
 export function nameOf(data: Workspace, id: string) {

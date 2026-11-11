@@ -1,3 +1,4 @@
+import { sowCompany } from "@/lib/sow-board";
 import type { StatusUpdate } from "@/lib/types";
 
 export function canPublishStatus(user: { email: string; fullName: string; sheetEditor?: boolean }) {
@@ -21,6 +22,16 @@ export function formatSheetLabel(iso: string) {
   return match ? `${match[3]}-${match[2]}-${match[1]}` : "";
 }
 
+export function statusIdentity(row: Pick<StatusUpdate, "project" | "subItem" | "statusDate">) {
+  const text = `${(row.project || "").trim()}\u0000${(row.subItem || "").trim()}\u0000${(row.statusDate || "").slice(0, 10)}`;
+  let value = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    value ^= text.charCodeAt(index);
+    value = Math.imul(value, 0x01000193) >>> 0;
+  }
+  return `status_${value.toString(36)}`;
+}
+
 export function presentStatus(row: StatusUpdate): StatusUpdate {
   const statusDate = (row.statusDate || "").slice(0, 10);
   const fields: Record<string, string> = {};
@@ -29,6 +40,11 @@ export function presentStatus(row: StatusUpdate): StatusUpdate {
     if (text) fields[key] = text;
   }
   return {
+    id: row.id || statusIdentity(row),
+    createdBy: row.createdBy,
+    createdAt: row.createdAt,
+    updatedBy: row.updatedBy,
+    updatedAt: row.updatedAt,
     sheetNo: row.sheetNo || 0,
     project: (row.project || "").trim(),
     subItem: (row.subItem || "").trim(),
@@ -36,7 +52,7 @@ export function presentStatus(row: StatusUpdate): StatusUpdate {
     remarks: row.remarks || "",
     statusDate,
     sheetLabel: (row.sheetLabel || "").trim() || formatSheetLabel(statusDate),
-    company: (row.company || "").trim(),
+    company: (row.company || "").trim() || sowCompany(row.project || ""),
     fields,
   };
 }
@@ -60,7 +76,19 @@ export function mergeStatus(current: StatusUpdate[], incoming: StatusUpdate[]) {
 }
 
 export function latestStatus(rows: StatusUpdate[]) {
-  const ready = rows.map(presentStatus).filter((row) => row.project && row.statusDate);
+  return statusAsOf(rows, "9999-12-31");
+}
+
+export function isArchiveDate(value: string | undefined): value is string {
+  return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)));
+}
+
+export function statusDates(rows: StatusUpdate[]) {
+  return [...new Set(rows.map((row) => (row.statusDate || "").slice(0, 10)).filter(Boolean))].sort().reverse();
+}
+
+export function statusAsOf(rows: StatusUpdate[], asOf: string) {
+  const ready = rows.map(presentStatus).filter((row) => row.project && row.statusDate && row.statusDate <= asOf);
   if (!ready.length) return { date: "", rows: [] as StatusUpdate[] };
   const date = ready.reduce((max, row) => (row.statusDate > max ? row.statusDate : max), ready[0].statusDate);
   return {

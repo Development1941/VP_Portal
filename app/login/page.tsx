@@ -9,6 +9,7 @@ const ACCOUNTS = [
   { preset: "owner", role: "Admin", email: "owner@embee.local", note: "GSVK SAI" },
   { preset: "manager", role: "Project Manager / PO", email: "manav@embee.local", note: "Manav Singal" },
   { preset: "scrum", role: "Scrum Master", email: "sm@embee.local", note: "Kaushik" },
+  { preset: "yuvraj", role: "Developer", email: "yuvraj@embee.local", note: "Yuvraj" },
   { preset: "client", role: "Client", email: "rakhee@embee.local", note: "Rakhee" },
   { preset: "brian", role: "Client", email: "brian@embee.local", note: "Brian" },
   { preset: "member", role: "Developer", email: "ishaan@embee.local", note: "Bhuvin Singla" },

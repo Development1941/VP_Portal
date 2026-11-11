@@ -3,9 +3,11 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Pencil } from "lucide-react";
-import { deleteHourlyEntryAction, saveHourlyEntryAction, saveSowRecordAction } from "@/app/actions";
+import { deleteHourlyEntryAction, deleteSowRecordAction, saveHourlyEntryAction, saveSowRecordAction } from "@/app/actions";
 import { ActionForm, Submit } from "@/components/common/forms";
+import { hourlyStatus, sheetHours, sowLink } from "@/components/sheets/cells";
 import { prettyDate } from "@/lib/format";
+import { DSR_STATUS_OPTIONS } from "@/lib/pmd-flow";
 import type { HourlyEntry, SowRecord } from "@/lib/types";
 
 export function SowEditRow({ row }: { row: SowRecord }) {
@@ -53,7 +55,8 @@ export function HourlyEditRow({ row, plan }: { row: HourlyEntry; plan: boolean }
         <>
           <td>{prettyDate(row.workDate)}</td>
           <td className="num">{sheetHours(row.hours)}</td>
-          <td>{row.status || "—"}</td>
+          <td>{hourlyStatus(row.status)}</td>
+          <td className="remarks">{row.blocker || "—"}</td>
           <td>{row.company || "—"}</td>
         </>
       )}
@@ -61,12 +64,32 @@ export function HourlyEditRow({ row, plan }: { row: HourlyEntry; plan: boolean }
   );
 }
 
-function sheetHours(value: number | null | undefined) {
-  if (value == null || Number.isNaN(value)) return "—";
-  return value.toLocaleString("en-IN", { maximumFractionDigits: 1 });
+export function Modal({ label, title, onClose, children }: { label: string; title: string; onClose: () => void; children: React.ReactNode }) {
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="edit-modal" role="presentation" onClick={onClose}>
+      <div className="edit-modal-card" role="dialog" aria-modal="true" aria-label={label} onClick={(event) => event.stopPropagation()}>
+        <div className="edit-modal-head">
+          <h3>{title}</h3>
+          <button type="button" className="btn ghost" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>,
+    document.body,
+  );
 }
 
-function EditRow({
+export function EditRow({
   label,
   title,
   form,
@@ -79,23 +102,10 @@ function EditRow({
 }) {
   const [open, setOpen] = useState(false);
 
-  useEffect(() => {
-    if (!open) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
-
   function openFromRow(event: React.MouseEvent<HTMLTableRowElement>) {
     const target = event.target as HTMLElement;
     if (target.closest("a, button, input, select, textarea, label")) return;
     setOpen(true);
-  }
-
-  function close() {
-    setOpen(false);
   }
 
   return (
@@ -105,78 +115,89 @@ function EditRow({
         <button type="button" className="edit-ico" aria-label={label} onClick={() => setOpen(true)}>
           <Pencil strokeWidth={1.75} aria-hidden />
         </button>
-        {open
-          ? createPortal(
-              <div className="edit-modal" role="presentation" onClick={close}>
-                <div
-                  className="edit-modal-card"
-                  role="dialog"
-                  aria-modal="true"
-                  aria-label={label}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <div className="edit-modal-head">
-                    <h3>{title}</h3>
-                    <button type="button" className="btn ghost" onClick={close}>
-                      Close
-                    </button>
-                  </div>
-                  {form(close)}
-                </div>
-              </div>,
-              document.body,
-            )
-          : null}
+        {open ? (
+          <Modal label={label} title={title} onClose={() => setOpen(false)}>
+            {form(() => setOpen(false))}
+          </Modal>
+        ) : null}
       </td>
     </tr>
   );
 }
 
-function SowForm({ row, onDone }: { row: SowRecord; onDone: () => void }) {
+export function SowForm({ row, onDone }: { row: SowRecord; onDone: () => void }) {
+  const bid = row.kind === "bid";
   return (
-    <ActionForm action={saveSowRecordAction} className="edit-modal-form" onDone={onDone}>
-      <input type="hidden" name="id" value={row.id} />
-      <input type="hidden" name="sheetNo" value={row.sheetNo} />
-      <input type="hidden" name="project" value={row.project} />
-      <input type="hidden" name="company" value={row.company} />
-      <label className="field">
-        <span>Sprint</span>
-        <input name="sprint" defaultValue={row.sprint} />
-      </label>
-      <label className="field">
-        <span>Link</span>
-        <input name="link" defaultValue={row.link} />
-      </label>
-      <label className="field">
-        <span>Signed</span>
-        <select name="signature" defaultValue={row.signature}>
-          <option value="">Not set</option>
-          <option>Signed</option>
-          <option>Unsigned</option>
-        </select>
-      </label>
-      <label className="field">
-        <span>Signed on</span>
-        <input name="signedOn" defaultValue={row.signedOn} />
-      </label>
-      <label className="field">
-        <span>CR / Addendum</span>
-        <textarea name="changeRequest" rows={3} defaultValue={row.changeRequest} />
-      </label>
-      <Submit>Save row</Submit>
-    </ActionForm>
+    <>
+      <ActionForm action={saveSowRecordAction} className="edit-modal-form" onDone={onDone}>
+        <input type="hidden" name="id" value={row.id} />
+        <input type="hidden" name="kind" value={row.kind} />
+        <input type="hidden" name="company" value={row.company} />
+        <label className="field">
+          <span>S.no</span>
+          <input name="sheetNo" type="number" min="0" defaultValue={row.sheetNo || ""} placeholder="Next number" />
+        </label>
+        <label className="field">
+          <span>Project</span>
+          <input name="project" required defaultValue={row.project} />
+        </label>
+        {bid ? null : (
+          <label className="field">
+            <span>Sprint</span>
+            <input name="sprint" defaultValue={row.sprint} />
+          </label>
+        )}
+        <label className="field">
+          <span>{bid ? "Reference link" : "Link"}</span>
+          <input name="link" defaultValue={row.link} />
+        </label>
+        {bid ? null : (
+          <>
+            <label className="field">
+              <span>Signed</span>
+              <select name="signature" defaultValue={row.signature}>
+                <option value="">Not set</option>
+                <option>Signed</option>
+                <option>Unsigned</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Signed on</span>
+              <input name="signedOn" defaultValue={row.signedOn} />
+            </label>
+            <label className="field">
+              <span>CR / Addendum</span>
+              <textarea name="changeRequest" rows={3} defaultValue={row.changeRequest} />
+            </label>
+          </>
+        )}
+        <Submit>{row.id ? "Save row" : "Add row"}</Submit>
+      </ActionForm>
+      {row.id ? (
+        <ActionForm action={deleteSowRecordAction} onDone={onDone}>
+          <input type="hidden" name="id" value={row.id} />
+          <Submit variant="ghost">Remove</Submit>
+        </ActionForm>
+      ) : null}
+    </>
   );
 }
 
-function HourlyForm({ row, plan, onDone }: { row: HourlyEntry; plan: boolean; onDone: () => void }) {
+export function HourlyForm({ row, plan, onDone }: { row: HourlyEntry; plan: boolean; onDone: () => void }) {
+  const [status, setStatus] = useState(row.status);
+  const blocked = /\bblock/i.test(status);
+  const statuses = DSR_STATUS_OPTIONS.includes(row.status) || !row.status ? DSR_STATUS_OPTIONS : [row.status, ...DSR_STATUS_OPTIONS];
   return (
     <>
       <ActionForm action={saveHourlyEntryAction} className="edit-modal-form" onDone={onDone}>
         <input type="hidden" name="id" value={row.id} />
-        <input type="hidden" name="sheetNo" value={row.sheetNo || ""} />
+        <label className="field">
+          <span>S.no</span>
+          <input name="sheetNo" type="number" min="0" defaultValue={row.sheetNo || ""} />
+        </label>
         <label className="field">
           <span>Project</span>
-          <input name="project" defaultValue={row.project} />
+          <input name="project" required defaultValue={row.project} />
         </label>
         <label className="field">
           <span>Sprint</span>
@@ -184,29 +205,34 @@ function HourlyForm({ row, plan, onDone }: { row: HourlyEntry; plan: boolean; on
         </label>
         <label className="field">
           <span>Resource</span>
-          <input name="resource" defaultValue={row.resource} />
+          <input name="resource" required defaultValue={row.resource} />
         </label>
         <label className="field">
           <span>Task</span>
-          <textarea name="task" rows={3} defaultValue={row.task || row.notes} />
+          <textarea name="task" rows={3} required defaultValue={row.task || row.notes} />
         </label>
         {plan ? (
           <>
-            <label className="field"><span>EST Start Date</span><input type="date" name="estStart" defaultValue={row.estStart} /></label>
+            <label className="field"><span>EST Start Date</span><input type="date" name="estStart" required defaultValue={row.estStart} /></label>
             <label className="field"><span>EST End Date</span><input type="date" name="estEnd" defaultValue={row.estEnd} /></label>
-            <label className="field"><span>Estimated Hours</span><input name="estimatedHours" type="number" min="0" step="0.1" defaultValue={row.estimatedHours ?? ""} /></label>
+            <label className="field"><span>Estimated Hours</span><input name="estimatedHours" type="number" min="0" step="0.1" required defaultValue={row.estimatedHours ?? ""} /></label>
             <label className="field"><span>Target hours embee</span><input name="targetHours" type="number" min="0" step="0.1" defaultValue={row.targetHours ?? ""} /></label>
             <label className="field"><span>Actual Start Date</span><input type="date" name="actualStart" defaultValue={row.actualStart} /></label>
             <label className="field"><span>Actual End Date</span><input type="date" name="actualEnd" defaultValue={row.actualEnd} /></label>
-            <label className="field"><span>Actual Hours</span><input name="actualHours" type="number" min="0" max="24" step="0.1" defaultValue={row.actualHours ?? ""} /></label>
+            <label className="field"><span>Actual Hours</span><input name="actualHours" type="number" min="0" step="0.1" defaultValue={row.actualHours ?? ""} /></label>
             <input type="hidden" name="workDate" value={row.workDate} />
             <input type="hidden" name="hours" value={row.hours} />
             <input type="hidden" name="company" value={row.company} />
+            <label className="field">
+              <span>Status</span>
+              <input name="status" defaultValue={row.status} />
+            </label>
+            <label className="field"><span>Approval</span><input name="approval" defaultValue={row.approval} /></label>
           </>
         ) : (
           <>
-            <label className="field"><span>Date</span><input type="date" name="workDate" defaultValue={row.workDate} /></label>
-            <label className="field"><span>Hours Spent</span><input name="hours" type="number" min="0" max="24" step="0.1" defaultValue={row.hours} /></label>
+            <label className="field"><span>Date</span><input type="date" name="workDate" required defaultValue={row.workDate} /></label>
+            <label className="field"><span>Hours Spent</span><input name="hours" type="number" min="0" max="24" step="0.1" required defaultValue={row.hours} /></label>
             <label className="field"><span>Company</span><input name="company" defaultValue={row.company} /></label>
             <input type="hidden" name="estStart" value={row.estStart} />
             <input type="hidden" name="estEnd" value={row.estEnd} />
@@ -215,35 +241,30 @@ function HourlyForm({ row, plan, onDone }: { row: HourlyEntry; plan: boolean; on
             <input type="hidden" name="actualStart" value={row.actualStart} />
             <input type="hidden" name="actualEnd" value={row.actualEnd} />
             <input type="hidden" name="actualHours" value={row.actualHours ?? ""} />
+            <input type="hidden" name="approval" value={row.approval} />
+            <label className="field">
+              <span>Status</span>
+              <select name="status" value={status} onChange={(event) => setStatus(event.target.value)}>
+                <option value="">Not set</option>
+                {statuses.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>Blocker{blocked ? " (required)" : ""}</span>
+              <textarea name="blocker" rows={3} required={blocked} defaultValue={row.blocker ?? ""} placeholder={blocked ? "Describe what is blocking this task. It goes to Escalations." : "Optional remarks"} />
+            </label>
           </>
         )}
-        <label className="field">
-          <span>Status</span>
-          <input name="status" defaultValue={row.status} />
-        </label>
-        {plan ? (
-          <label className="field"><span>Approval</span><input name="approval" defaultValue={row.approval} /></label>
-        ) : (
-          <input type="hidden" name="approval" value={row.approval} />
-        )}
-        <Submit>Save</Submit>
+        <Submit>{row.id ? "Save" : "Add entry"}</Submit>
       </ActionForm>
-      <ActionForm action={deleteHourlyEntryAction} onDone={onDone}>
-        <input type="hidden" name="id" value={row.id} />
-        <Submit variant="ghost">Remove</Submit>
-      </ActionForm>
+      {row.id ? (
+        <ActionForm action={deleteHourlyEntryAction} onDone={onDone}>
+          <input type="hidden" name="id" value={row.id} />
+          <Submit variant="ghost">Remove</Submit>
+        </ActionForm>
+      ) : null}
     </>
   );
-}
-
-function sowLink(value: string) {
-  if (!value) return "—";
-  if (/^https?:\/\//i.test(value)) {
-    return (
-      <a href={value} target="_blank" rel="noreferrer">
-        {value}
-      </a>
-    );
-  }
-  return value;
 }

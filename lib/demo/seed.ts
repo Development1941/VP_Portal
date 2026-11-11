@@ -4,7 +4,7 @@ import type { Role, Workspace } from "@/lib/types";
 
 export type DemoUser = Workspace["users"][number] & { password: string; avatarUrl?: string; about?: string; companyScope?: string; sheetEditor?: boolean };
 
-export type DemoStore = Omit<Workspace, "users"> & {
+export type DemoStore = Omit<Workspace, "users" | "activity"> & {
   users: DemoUser[];
   organizations: { id: string; name: string; status: "active" | "inactive" }[];
   rosterApplied?: boolean;
@@ -154,6 +154,19 @@ export function buildSeed(): DemoStore {
       hourlyCost: 0,
     },
     {
+      id: "usr_yuvraj",
+      fullName: "Yuvraj",
+      email: "yuvraj@embee.local",
+      password: "demo123",
+      title: "Developer",
+      phone: "",
+      roleId: "role_member",
+      roleName: "Developer",
+      roleSlug: "developer",
+      status: "active",
+      hourlyCost: 0,
+    },
+    {
       id: "usr_rakhee",
       fullName: "Rakhee",
       email: "rakhee@embee.local",
@@ -212,6 +225,7 @@ export function buildSeed(): DemoStore {
     statusUpdates: [],
     sowRecords: [],
     hourlyEntries: [],
+    checklistItems: [],
     currency: "INR",
   };
 }
