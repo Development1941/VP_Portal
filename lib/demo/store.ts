@@ -1128,6 +1128,8 @@ export function deleteHourlyEntry(user: SessionUser, id: string) {
       linked.resolutionNote = linked.resolutionNote || "The hourly row was removed.";
       linked.updatedBy = user.id;
       linked.updatedAt = stamp();
+      linked.resolvedBy = user.id;
+      linked.resolvedAt = stamp();
     }
     const plan = isResourceAllocation(existing);
     audit(store, user, plan ? "allocation.delete" : "hourly.delete", "hourly", id, plan ? "Removed an allocation row." : "Removed an hourly row.");
@@ -1436,6 +1438,17 @@ export function saveEscalation(
   return mutate((store) => {
     const item = store.escalations.find((entry) => entry.id === input.id);
     if (!item) throw new PortalError("That escalation was not found.");
+    if (input.status === "resolved" && !(input.resolutionNote ?? item.resolutionNote ?? "").trim()) {
+      throw new PortalError("Add a resolution note before resolving this escalation.");
+    }
+    if (input.status === "resolved" && item.status !== "resolved") {
+      item.resolvedAt = stamp();
+      item.resolvedBy = user.id;
+    }
+    if (input.status !== "resolved") {
+      item.resolvedAt = "";
+      item.resolvedBy = "";
+    }
     item.status = input.status;
     if (input.ownerName != null) item.ownerName = input.ownerName.trim() || item.ownerName;
     if (input.dueDate != null) item.dueDate = input.dueDate;

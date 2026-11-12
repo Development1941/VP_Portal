@@ -89,6 +89,7 @@ export function syncBlockerEscalation(escalations: Escalation[], entry: HourlySh
         status: reopened ? "open" : existing.status,
         updatedBy: context.actorId,
         updatedAt: context.now,
+        ...(reopened ? { resolvedAt: "", resolvedBy: "" } : {}),
       });
       return { item: existing, action: reopened ? ("reopened" as const) : ("updated" as const) };
     }
@@ -116,6 +117,8 @@ export function syncBlockerEscalation(escalations: Escalation[], entry: HourlySh
     existing.resolutionNote = existing.resolutionNote?.trim() || "Unblocked on the hourly tracker.";
     existing.updatedBy = context.actorId;
     existing.updatedAt = context.now;
+    existing.resolvedBy = context.actorId;
+    existing.resolvedAt = context.now;
     return { item: existing, action: "resolved" as const };
   }
   return { item: existing ?? null, action: "none" as const };
@@ -158,6 +161,12 @@ export function isTaskComplete(plans: HourlyShape[], logs: HourlyShape[]) {
   return logs.every((row) => isSettledStatus(row.status));
 }
 
+export function isLoggedComplete(logs: HourlyShape[]) {
+  if (!logs.length || logs.some((row) => isBlockedStatus(row.status))) return false;
+  const latest = [...logs].sort((a, b) => (b.workDate || "").localeCompare(a.workDate || ""))[0];
+  return isSettledStatus(latest.status);
+}
+
 export function deriveChecklist(entries: HourlyShape[], existing: ChecklistItem[], now: string): ChecklistItem[] {
   const plans = new Map<string, HourlyShape[]>();
   const logs = new Map<string, HourlyShape[]>();
@@ -172,10 +181,12 @@ export function deriveChecklist(entries: HourlyShape[], existing: ChecklistItem[
   const known = new Set(existing.map((item) => item.id));
   let next = existing.reduce((max, item) => Math.max(max, item.sheetNo || 0), 0);
   const created: ChecklistItem[] = [];
-  for (const [key, planned] of plans) {
+  for (const key of new Set([...plans.keys(), ...logs.keys()])) {
+    const planned = plans.get(key) ?? [];
     const actual = logs.get(key) ?? [];
-    if (!isTaskComplete(planned, actual)) continue;
-    const first = planned[0];
+    const complete = planned.length ? isTaskComplete(planned, actual) : isLoggedComplete(actual);
+    if (!complete) continue;
+    const first = planned[0] ?? [...actual].sort((a, b) => (b.workDate || "").localeCompare(a.workDate || ""))[0];
     const id = checklistIdFor(first.project, first.task);
     if (known.has(id)) continue;
     known.add(id);

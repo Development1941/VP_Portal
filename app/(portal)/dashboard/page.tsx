@@ -20,7 +20,8 @@ import type { Escalation, HourlyEntry } from "@/lib/types";
 function openOn(item: Escalation, day: string) {
   if (item.createdAt.slice(0, 10) > day) return false;
   if (item.status !== "resolved") return true;
-  return Boolean(item.updatedAt && item.updatedAt.slice(0, 10) > day);
+  const resolvedOn = item.resolvedAt || item.updatedAt;
+  return Boolean(resolvedOn && resolvedOn.slice(0, 10) > day);
 }
 
 function activeOn(row: HourlyEntry, day: string) {

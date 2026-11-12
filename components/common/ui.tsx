@@ -98,6 +98,7 @@ const PAGE_ICONS: Record<string, LucideIcon> = {
   Utilization: Gauge,
   "Utilization and billing": Gauge,
   Escalations: TriangleAlert,
+  "Escalation management": TriangleAlert,
   Projects: FolderKanban,
   "Project health": HeartPulse,
   Clients: Building2,

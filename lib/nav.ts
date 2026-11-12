@@ -21,7 +21,7 @@ export const NAV: NavItem[] = [
   { href: "/sow", label: "SOW management", icon: "sow", section: "Operations", allow: () => true, tab: "sowManagement" },
   { href: "/delivery", label: "Task management", icon: "tasks", section: "Operations", allow: () => true, tab: "dsrHourlyTracker" },
   { href: "/utilization", label: "Resource management", icon: "resources", section: "Operations", allow: () => true, tab: "utilization" },
-  { href: "/escalations", label: "Escalations", icon: "alert", section: "Operations", allow: () => true, tab: "escalations" },
+  { href: "/escalations", label: "Escalation management", icon: "alert", section: "Operations", allow: () => true, tab: "escalations" },
   { href: "/checklist", label: "Delivery checklist", icon: "checklist", section: "Operations", allow: () => true, tab: "deliveryChecklist" },
   { href: "/projects", label: "Projects", icon: "projects", section: "Delivery", allow: (user) => canAny(user, ["projects.view", "projects.view_all"]) },
   { href: "/health", label: "Project health", icon: "health", section: "Delivery", allow: (user) => user.roleSlug === "director" },
