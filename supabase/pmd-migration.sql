@@ -67,6 +67,9 @@ alter table public.escalations add column if not exists source_entry_id uuid ref
 alter table public.escalations add column if not exists resolution_note text not null default '';
 alter table public.escalations add column if not exists updated_by uuid references public.profiles(id) on delete set null;
 alter table public.escalations add column if not exists updated_at timestamptz not null default now();
+alter table public.escalations add column if not exists resolved_at timestamptz;
+alter table public.escalations add column if not exists resolved_by uuid references public.profiles(id) on delete set null;
+update public.escalations set resolved_at = updated_at, resolved_by = updated_by where status = 'resolved' and resolved_at is null;
 create unique index if not exists escalations_source_entry_key on public.escalations (source_entry_id) where source_entry_id is not null;
 
 create table if not exists public.checklist_items (
