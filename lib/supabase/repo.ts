@@ -285,6 +285,8 @@ function mapEscalation(row: Row): Escalation {
     resolutionNote: text(row.resolution_note),
     updatedBy: text(row.updated_by),
     updatedAt: text(row.updated_at),
+    resolvedBy: text(row.resolved_by),
+    resolvedAt: text(row.resolved_at),
   };
 }
 
@@ -1917,7 +1919,18 @@ export async function saveEscalation(
   raise(error);
   if (!data) throw new PortalError("That escalation was not found.");
   const item = mapEscalation(data as Row);
+  if (input.status === "resolved" && !(input.resolutionNote ?? item.resolutionNote ?? "").trim()) {
+    throw new PortalError("Add a resolution note before resolving this escalation.");
+  }
   const patch: Row = { status: input.status, updated_by: user.id, updated_at: stamp() };
+  if (input.status === "resolved" && item.status !== "resolved") {
+    patch.resolved_at = stamp();
+    patch.resolved_by = user.id;
+  }
+  if (input.status !== "resolved") {
+    patch.resolved_at = null;
+    patch.resolved_by = null;
+  }
   if (input.ownerName != null) patch.owner_name = input.ownerName.trim() || item.ownerName;
   if (input.dueDate != null) patch.due_date = uuid(input.dueDate);
   if (input.resolutionNote != null) patch.resolution_note = input.resolutionNote.trim();
@@ -2281,7 +2294,7 @@ async function syncCloudBlocker(user: SessionUser, entry: { id: string; project:
       const reopened = text(existing.status) === "resolved";
       const { error } = await supabase
         .from("escalations")
-        .update({ description, project_name: entry.project, status: reopened ? "open" : text(existing.status), updated_by: user.id, updated_at: stamp() })
+        .update({ description, project_name: entry.project, status: reopened ? "open" : text(existing.status), updated_by: user.id, updated_at: stamp(), ...(reopened ? { resolved_at: null, resolved_by: null } : {}) })
         .eq("id", text(existing.id));
       raise(error);
       if (reopened) await trail(user, "escalation.auto", "escalation", text(existing.id), `Blocked again: ${entry.task || "task"} on ${entry.project}.`);
@@ -2310,7 +2323,7 @@ async function syncCloudBlocker(user: SessionUser, entry: { id: string; project:
   if (existing && text(existing.status) !== "resolved") {
     const { error } = await supabase
       .from("escalations")
-      .update({ status: "resolved", resolution_note: text(existing.resolution_note) || "Unblocked on the hourly tracker.", updated_by: user.id, updated_at: stamp() })
+      .update({ status: "resolved", resolution_note: text(existing.resolution_note) || "Unblocked on the hourly tracker.", updated_by: user.id, updated_at: stamp(), resolved_by: user.id, resolved_at: stamp() })
       .eq("id", text(existing.id));
     raise(error);
     await trail(user, "escalation.resolve", "escalation", text(existing.id), `Unblocked ${entry.task || "task"} on ${entry.project}.`);
@@ -2426,7 +2439,7 @@ export async function deleteHourlyEntry(user: SessionUser, id: string) {
   if (!plan) {
     await supabase
       .from("escalations")
-      .update({ status: "resolved", resolution_note: "The hourly row was removed.", updated_by: user.id, updated_at: stamp() })
+      .update({ status: "resolved", resolution_note: "The hourly row was removed.", updated_by: user.id, updated_at: stamp(), resolved_by: user.id, resolved_at: stamp() })
       .eq("source_entry_id", id)
       .neq("status", "resolved");
   }

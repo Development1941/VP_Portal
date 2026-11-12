@@ -1,34 +1,48 @@
 import Link from "next/link";
-import { raiseEscalationAction, saveWorkstreamAction, setEscalationStatusAction } from "@/app/actions";
+import { raiseEscalationAction, setEscalationStatusAction } from "@/app/actions";
 import { ActionForm, Submit } from "@/components/common/forms";
 import { Badge, Denied, PageHeader, Stat } from "@/components/common/ui";
+import { todayIso } from "@/lib/dates";
 import { ESCALATION_STATUSES, ESCALATION_TYPES } from "@/lib/delivery";
 import { prettyDate } from "@/lib/format";
 import { nameOf, projectOf, requireTab } from "@/lib/page";
+import type { Escalation, Workspace } from "@/lib/types";
+
+function resolvedOn(item: Escalation) {
+  return (item.resolvedAt || item.updatedAt || item.createdAt).slice(0, 10);
+}
+
+function personName(data: Workspace, id: string | undefined) {
+  if (!id) return "—";
+  if (id === "system") return "System";
+  return data.users.find((person) => person.id === id)?.fullName || "—";
+}
 
 export default async function EscalationsPage() {
   const { data, allowed } = await requireTab("escalations");
-  if (!allowed) return <Denied title="Escalations and blockers" />;
-  const open = data.escalations.filter((item) => item.status !== "resolved").length;
+  if (!allowed) return <Denied title="Escalation management" />;
+  const today = todayIso();
+  const pending = data.escalations.filter((item) => item.status !== "resolved").sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const done = data.escalations.filter((item) => item.status === "resolved").sort((a, b) => resolvedOn(b).localeCompare(resolvedOn(a)));
   const blockers = data.escalations.filter((item) => item.type === "blocker").length;
-  const resolved = data.escalations.filter((item) => item.status === "resolved").length;
-  const ordered = [...data.escalations].sort((a, b) => Number(a.status === "resolved") - Number(b.status === "resolved") || b.createdAt.localeCompare(a.createdAt));
+  const overdue = pending.filter((item) => item.dueDate && item.dueDate < today).length;
   const numbers = new Map([...data.escalations].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map((item, index) => [item.id, `E-${101 + index}`]));
   const projectNames = [...new Set([...data.projects.map((project) => project.name), ...data.statusUpdates.map((row) => row.project), ...data.hourlyEntries.map((row) => row.project)].map((name) => name.trim()).filter(Boolean))].sort();
+  const projectName = (item: Escalation) => item.projectName || projectOf(data, item.projectId)?.name || "Project";
 
   return (
     <>
-      <PageHeader eyebrow="Operations" title="Escalations" />
+      <PageHeader eyebrow="Operations" title="Escalation management" />
       <div className="stats">
         <Stat label="Total raised" value={String(data.escalations.length)} />
-        <Stat label="Open" value={String(open)} />
+        <Stat label="Open" value={String(pending.length)} note={overdue ? `${overdue} past target date` : undefined} />
         <Stat label="Blockers" value={String(blockers)} />
-        <Stat label="Resolved" value={String(resolved)} />
+        <Stat label="Resolved" value={String(done.length)} href="#resolved" />
       </div>
-      <section className="card">
+      <section className="card" id="resolution">
         <div className="card-head">
-          <h2>Tracker</h2>
-          <span className="muted">Blocked rows on the hourly tracker are listed here automatically</span>
+          <h2>Escalation resolution</h2>
+          <span className="muted">Open escalations. Add a resolution note and click Resolve to move it to Resolved escalations.</span>
         </div>
         <div className="table-wrap">
           <table>
@@ -36,14 +50,17 @@ export default async function EscalationsPage() {
               <tr><th>ID</th><th>Project</th><th>Type</th><th>Description</th><th>Source</th><th>Owner, target date, status, and resolution</th></tr>
             </thead>
             <tbody>
-              {ordered.map((item) => (
+              {pending.map((item) => (
                 <tr key={item.id}>
                   <td>{numbers.get(item.id)}</td>
-                  <td>{item.projectName || projectOf(data, item.projectId)?.name || "Project"}</td>
+                  <td>{projectName(item)}</td>
                   <td><Badge value={item.type} /></td>
                   <td className="remarks">
                     {item.description}
-                    <div className="muted">Raised {prettyDate(item.createdAt.slice(0, 10))} by {item.createdBy === "system" ? "System" : nameOf(data, item.createdBy)}</div>
+                    <div className="muted">
+                      Raised {prettyDate(item.createdAt.slice(0, 10))} by {item.createdBy === "system" ? "System" : nameOf(data, item.createdBy)}
+                      {item.dueDate && item.dueDate < today ? " · past target date" : ""}
+                    </div>
                   </td>
                   <td>{item.sourceEntryId ? <Link href="/delivery">Task management</Link> : "Raised here"}</td>
                   <td>
@@ -65,14 +82,17 @@ export default async function EscalationsPage() {
                       </label>
                       <label className="field">
                         <span>Resolution note</span>
-                        <textarea name="resolutionNote" rows={1} defaultValue={item.resolutionNote ?? ""} />
+                        <textarea name="resolutionNote" rows={1} defaultValue={item.resolutionNote ?? ""} placeholder="Required to resolve" />
                       </label>
-                      <Submit variant="ghost">Save</Submit>
+                      <div className="sheet-actions">
+                        <button type="submit" className="btn" name="intent" value="resolve">Resolve</button>
+                        <Submit variant="ghost">Save</Submit>
+                      </div>
                     </ActionForm>
                   </td>
                 </tr>
               ))}
-              {data.escalations.length === 0 ? <tr><td colSpan={6}>Nothing raised yet.</td></tr> : null}
+              {pending.length === 0 ? <tr><td colSpan={6}>No open escalations.</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -99,32 +119,33 @@ export default async function EscalationsPage() {
           <Submit>Raise item</Submit>
         </ActionForm>
       </section>
-      <section className="card">
-        <h2>Consolidated progress across six workstreams</h2>
+      <section className="card" id="resolved">
+        <div className="card-head">
+          <h2>Resolved escalations</h2>
+          <span className="muted">{done.length} resolved, newest first</span>
+        </div>
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Workstream</th><th>Owner, target date, and status</th></tr>
+              <tr><th>ID</th><th>Resolved on</th><th>Project</th><th>Type</th><th>Description</th><th>Resolution</th><th>Owner</th><th>Resolved by</th></tr>
             </thead>
             <tbody>
-              {data.workstreams.map((item) => (
+              {done.map((item) => (
                 <tr key={item.id}>
-                  <td>{item.name}</td>
-                  <td>
-                    <ActionForm action={saveWorkstreamAction} className="inline-form">
-                      <input type="hidden" name="id" value={item.id} />
-                      <input name="ownerName" defaultValue={item.ownerName} aria-label={`${item.name} owner`} />
-                      <input type="date" name="targetDate" defaultValue={item.targetDate} aria-label={`${item.name} target date`} />
-                      <select name="status" defaultValue={item.status} aria-label={`${item.name} status`}>
-                        <option value="in_progress">In progress</option>
-                        <option value="blocked">Blocked</option>
-                        <option value="done">Done</option>
-                      </select>
-                      <Submit variant="ghost">Save</Submit>
-                    </ActionForm>
+                  <td>{numbers.get(item.id)}</td>
+                  <td>{prettyDate(resolvedOn(item))}</td>
+                  <td>{projectName(item)}</td>
+                  <td><Badge value={item.type} /></td>
+                  <td className="remarks">
+                    {item.description}
+                    <div className="muted">Raised {prettyDate(item.createdAt.slice(0, 10))}</div>
                   </td>
+                  <td className="remarks">{item.resolutionNote || "—"}</td>
+                  <td>{item.ownerName || "—"}</td>
+                  <td>{personName(data, item.resolvedBy || item.updatedBy)}</td>
                 </tr>
               ))}
+              {done.length === 0 ? <tr><td colSpan={8}>Nothing has been resolved yet.</td></tr> : null}
             </tbody>
           </table>
         </div>

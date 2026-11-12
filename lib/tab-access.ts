@@ -16,7 +16,7 @@ export const TAB_LABELS: Record<TabKey, string> = {
   sowManagement: "SOW management",
   utilization: "Resource management",
   dsrHourlyTracker: "Task management",
-  escalations: "Escalations",
+  escalations: "Escalation management",
   deliveryChecklist: "Project delivery checklist",
 };
 

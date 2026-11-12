@@ -837,13 +837,15 @@ export async function raiseEscalationAction(_prev: FormState, form: FormData): P
 export async function setEscalationStatusAction(_prev: FormState, form: FormData) {
   return run(async () => {
     const user = await actor();
+    const resolving = str(form, "intent") === "resolve";
     await db().saveEscalation(user, {
       id: str(form, "id"),
-      status: choice(form, "status", ["open", "in_review", "resolved"] as const, "open"),
+      status: resolving ? "resolved" : choice(form, "status", ["open", "in_review", "resolved"] as const, "open"),
       ownerName: form.has("ownerName") ? str(form, "ownerName") : undefined,
       dueDate: form.has("dueDate") ? str(form, "dueDate") : undefined,
       resolutionNote: form.has("resolutionNote") ? str(form, "resolutionNote") : undefined,
     });
+    if (resolving || str(form, "status") === "resolved") return "Escalation resolved and moved to Resolved escalations.";
   }, "Escalation updated.");
 }
 

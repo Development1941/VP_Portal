@@ -75,11 +75,14 @@ test("unblocking resolves the linked escalation and re-blocking reopens the same
   assert.equal(resolved.action, "resolved");
   assert.equal(list[0].status, "resolved");
   assert.equal(list[0].resolutionNote, "Unblocked on the hourly tracker.");
+  assert.equal(list[0].resolvedAt, "2026-11-10T10:00:00.000Z");
+  assert.equal(list[0].resolvedBy, "u1");
   const reopened = syncBlockerEscalation(list, entry({ status: "Blocked", blocker: "No access again" }), context());
   assert.equal(reopened.action, "reopened");
   assert.equal(list.length, 1);
   assert.equal(list[0].id, created.item?.id);
   assert.equal(list[0].status, "open");
+  assert.equal(list[0].resolvedAt, "");
 });
 
 test("escalation status maps back onto the DSR row", () => {
@@ -106,6 +109,16 @@ test("deriveChecklist adds a completed task once", () => {
   assert.equal(created[0].source, "auto");
   assert.equal(deriveChecklist(rows, created, "2026-11-10T10:00:00.000Z").length, 0);
   assert.equal(deriveChecklist([plan(), entry({ hours: 4 })], [], "2026-11-10T10:00:00.000Z").length, 0);
+});
+
+test("completed Task management rows join the checklist even without a plan", () => {
+  const done = [entry({ id: "h1", task: "Write tests", hours: 3, workDate: "2026-11-04" }), entry({ id: "h2", task: "Write tests", hours: 2, workDate: "2026-11-05", status: "Completed" })];
+  const created = deriveChecklist(done, [], "2026-11-10T10:00:00.000Z");
+  assert.equal(created.length, 1);
+  assert.equal(created[0].task, "Write tests");
+  assert.equal(created[0].completedOn, "2026-11-05");
+  assert.equal(deriveChecklist([entry({ task: "Still going", status: "In Progress" })], [], "2026-11-10T10:00:00.000Z").length, 0);
+  assert.equal(deriveChecklist([entry({ task: "Stuck", status: "Completed" }), entry({ id: "h3", task: "Stuck", status: "Blocked", blocker: "x" })], [], "2026-11-10T10:00:00.000Z").length, 0);
 });
 
 test("client approval writes back only to the matching allocation row", () => {

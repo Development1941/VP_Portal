@@ -85,10 +85,10 @@ export function AddChecklistEntry() {
   );
 }
 
-export function ExportCsv({ kind }: { kind: "utilization" | "dsr" | "checklist" }) {
+export function ExportCsv({ kind, format = "csv" }: { kind: "utilization" | "dsr" | "checklist"; format?: "csv" | "xlsx" }) {
   return (
-    <a className="btn ghost" href={`/api/export?kind=${kind}`} download>
-      <Download strokeWidth={1.75} aria-hidden size={16} /> Export CSV
+    <a className="btn ghost" href={`/api/export?kind=${kind}${format === "xlsx" ? "&format=xlsx" : ""}`} download>
+      <Download strokeWidth={1.75} aria-hidden size={16} /> {format === "xlsx" ? "Export Excel" : "Export CSV"}
     </a>
   );
 }

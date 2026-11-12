@@ -156,6 +156,8 @@ export type Escalation = {
   resolutionNote?: string;
   updatedBy?: string;
   updatedAt?: string;
+  resolvedBy?: string;
+  resolvedAt?: string;
 };
 
 export type ChecklistItem = AuditStamp & {
