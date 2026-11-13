@@ -4,10 +4,11 @@ import { ActionForm, Submit } from "@/components/common/forms";
 import { Badge, Denied, PageHeader } from "@/components/common/ui";
 import { can } from "@/lib/access";
 import { requirePage } from "@/lib/page";
+import { canSeeLeadershipSections } from "@/lib/tab-access";
 
 export default async function ClientsPage({ searchParams }: { searchParams: Promise<{ edit?: string }> }) {
   const { user, data, allowed } = await requirePage(["clients.view"]);
-  if (!allowed) return <Denied title="Clients" />;
+  if (!allowed || !canSeeLeadershipSections(user)) return <Denied title="Clients" />;
   const query = await searchParams;
   const editing = data.clients.find((client) => client.id === query.edit);
 

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PortalError } from "./form.ts";
-import { assertCanEdit, assertCanExport, assertHourlyWrite, canEditTab, canExportCsv, canWriteHourlyRow, TAB_KEYS, type TabKey, type TabUser } from "./tab-access.ts";
+import { assertCanEdit, assertCanExport, assertHourlyWrite, canEditTab, canExportCsv, canSeeLeadershipSections, canWriteHourlyRow, TAB_KEYS, type TabKey, type TabUser } from "./tab-access.ts";
 
 const accounts: Record<string, TabUser> = {
   admin: { email: "owner@embee.local", fullName: "GSVK SAI", roleSlug: "admin", sheetEditor: true },
@@ -57,6 +57,12 @@ test("developers write only their own DSR rows", () => {
   assert.equal(canWriteHourlyRow(manav, { plan: false, ownerId: "usr_yuvraj" }), true);
   assert.equal(canWriteHourlyRow(rakhee, { plan: false }), false);
   assert.throws(() => assertHourlyWrite(yuvraj, { plan: false, ownerId: "usr_kaushik" }), PortalError);
+});
+
+test("only Harshit and GSVK SAI see the Delivery and Administration sections", () => {
+  for (const [name, user] of Object.entries(accounts)) {
+    assert.equal(canSeeLeadershipSections(user), name === "admin" || name === "harshit", name);
+  }
 });
 
 test("CSV export follows its own map", () => {

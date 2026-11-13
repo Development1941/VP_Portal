@@ -4,10 +4,11 @@ import { Badge, Denied, PageHeader } from "@/components/common/ui";
 import { isSupabaseConfigured } from "@/lib/env";
 import { PERMISSIONS } from "@/lib/permissions";
 import { requirePage } from "@/lib/page";
+import { canSeeLeadershipSections } from "@/lib/tab-access";
 
 export default async function SettingsPage() {
-  const { data, allowed } = await requirePage(["settings.manage"]);
-  if (!allowed) return <Denied title="Settings" />;
+  const { user, data, allowed } = await requirePage(["settings.manage"]);
+  if (!allowed || !canSeeLeadershipSections(user)) return <Denied title="Settings" />;
   const modules = [...new Set(PERMISSIONS.map((item) => item.module))];
 
   return (

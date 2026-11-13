@@ -63,16 +63,6 @@ export function SideNav({ links, className }: { links: NavLink[]; className: str
             .map((link) => {
               const Icon = ICONS[link.icon] ?? LayoutDashboard;
               const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
-              if (link.disabled) {
-                return (
-                  <span key={link.href} className="nav-disabled" aria-disabled="true" title={`${link.label} is not enabled for your profile`}>
-                    <span className="nav-ico">
-                      <Icon strokeWidth={1.75} aria-hidden />
-                    </span>
-                    <span>{link.label}</span>
-                  </span>
-                );
-              }
               return (
                 <Link
                   key={link.href}

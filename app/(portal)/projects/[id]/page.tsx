@@ -8,6 +8,7 @@ import { db } from "@/lib/data";
 import { hoursLabel, money, prettyDate, prettyStamp } from "@/lib/format";
 import { projectHealth } from "@/lib/health";
 import { clientOf, nameOf, requirePage } from "@/lib/page";
+import { canSeeLeadershipSections } from "@/lib/tab-access";
 import { projectEconomics } from "@/lib/reports";
 import { isOverdue, lateMilestones, lateTasks, loggedHours, openTasks } from "@/lib/tracking";
 import type { Task } from "@/lib/types";
@@ -17,7 +18,7 @@ const TASK_STATES: Task["status"][] = ["backlog", "in_progress", "review", "done
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { user, data, allowed } = await requirePage(["projects.view", "projects.view_all"]);
-  if (!allowed) return <PageHeader eyebrow="Project" title="You do not have access to this project." />;
+  if (!allowed || !canSeeLeadershipSections(user)) return <PageHeader eyebrow="Project" title="You do not have access to this project." />;
   const project = data.projects.find((item) => item.id === id);
   if (!project) return <PageHeader eyebrow="Project" title="Project not found." />;
   const manage = canManageProject(user, project);

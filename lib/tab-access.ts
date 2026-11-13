@@ -64,6 +64,12 @@ export function canExportCsv(user: TabUser, kind: ExportKey) {
   return profileKeys(user).some((key) => allowed.includes(key));
 }
 
+export const LEADERSHIP_SECTIONS = ["Delivery", "Administration"];
+
+export function canSeeLeadershipSections(user: TabUser) {
+  return profileKeys(user).some((key) => key === "PMD_ADMIN" || key === "HARSHIT");
+}
+
 export function canWriteHourlyRow(user: TabUser & { id: string }, row: { plan: boolean; ownerId?: string }) {
   if (row.plan) return canEditTab(user, "utilization");
   if (canEditTab(user, "dsrHourlyTracker")) return true;

@@ -1,10 +1,11 @@
 import { Badge, Denied, PageHeader } from "@/components/common/ui";
 import { prettyStamp } from "@/lib/format";
 import { nameOf, requirePage } from "@/lib/page";
+import { canSeeLeadershipSections } from "@/lib/tab-access";
 
 export default async function AuditPage() {
-  const { data, allowed } = await requirePage(["audit.view"]);
-  if (!allowed) return <Denied title="Audit log" />;
+  const { user, data, allowed } = await requirePage(["audit.view"]);
+  if (!allowed || !canSeeLeadershipSections(user)) return <Denied title="Audit log" />;
 
   return (
     <>

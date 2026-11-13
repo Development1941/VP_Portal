@@ -1,7 +1,7 @@
 import { canAny } from "@/lib/access";
 import { showCommercials } from "@/lib/commercial";
 import type { PermissionKey } from "@/lib/permissions";
-import { canEditTab, type TabKey } from "@/lib/tab-access";
+import { canEditTab, canSeeLeadershipSections, LEADERSHIP_SECTIONS, type TabKey } from "@/lib/tab-access";
 import type { SessionUser } from "@/lib/types";
 
 export type NavItem = {
@@ -23,9 +23,6 @@ export const NAV: NavItem[] = [
   { href: "/utilization", label: "Resource management", icon: "resources", section: "Operations", allow: () => true, tab: "utilization" },
   { href: "/escalations", label: "Escalation management", icon: "alert", section: "Operations", allow: () => true, tab: "escalations" },
   { href: "/checklist", label: "Delivery checklist", icon: "checklist", section: "Operations", allow: () => true, tab: "deliveryChecklist" },
-  { href: "/projects", label: "Projects", icon: "projects", section: "Delivery", allow: (user) => canAny(user, ["projects.view", "projects.view_all"]) },
-  { href: "/health", label: "Project health", icon: "health", section: "Delivery", allow: (user) => user.roleSlug === "director" },
-  { href: "/clients", label: "Clients", icon: "clients", section: "Delivery", allow: (user) => canAny(user, ["clients.view"]) },
   { href: "/billing", label: "Billing", icon: "billing", section: "Commercial", allow: (user) => canAny(user, ["billing.features", "billing.rates"]) },
   { href: "/invoices", label: "Invoices", icon: "invoices", section: "Commercial", allow: (user) => canAny(user, ["invoices.view"]) },
   { href: "/payments", label: "Payments", icon: "payments", section: "Commercial", allow: (user) => canAny(user, ["payments.view"]) },
@@ -36,12 +33,18 @@ export const NAV: NavItem[] = [
 ];
 
 export function navigation(user: SessionUser) {
-  return NAV.filter((item) => item.allow(user) && (showCommercials || item.section !== "Commercial")).map(({ href, label, icon, section, tab }) => ({
+  const leadership = canSeeLeadershipSections(user);
+  return NAV.filter(
+    (item) =>
+      item.allow(user) &&
+      (showCommercials || item.section !== "Commercial") &&
+      (!item.tab || canEditTab(user, item.tab)) &&
+      (leadership || !LEADERSHIP_SECTIONS.includes(item.section)),
+  ).map(({ href, label, icon, section }) => ({
     href,
     label,
     icon,
     section,
-    disabled: tab ? !canEditTab(user, tab) : false,
   }));
 }
 

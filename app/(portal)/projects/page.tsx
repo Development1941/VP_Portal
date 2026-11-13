@@ -6,11 +6,12 @@ import { can } from "@/lib/access";
 import { showCommercials } from "@/lib/commercial";
 import { money, prettyDate } from "@/lib/format";
 import { clientOf, nameOf, requirePage } from "@/lib/page";
+import { canSeeLeadershipSections } from "@/lib/tab-access";
 import { projectEconomics } from "@/lib/reports";
 
 export default async function ProjectsPage() {
   const { user, data, allowed } = await requirePage(["projects.view", "projects.view_all"]);
-  if (!allowed) return <Denied title="Projects" />;
+  if (!allowed || !canSeeLeadershipSections(user)) return <Denied title="Projects" />;
   const owners = data.users.filter((person) => person.status === "active");
 
   return (

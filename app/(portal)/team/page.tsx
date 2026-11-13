@@ -6,10 +6,11 @@ import { can } from "@/lib/access";
 import { showCommercials } from "@/lib/commercial";
 import { money } from "@/lib/format";
 import { requirePage } from "@/lib/page";
+import { canSeeLeadershipSections } from "@/lib/tab-access";
 
 export default async function TeamPage({ searchParams }: { searchParams: Promise<{ edit?: string }> }) {
   const { user, data, allowed } = await requirePage(["team.view", "team.manage"]);
-  if (!allowed) return <Denied title="Team" />;
+  if (!allowed || !canSeeLeadershipSections(user)) return <Denied title="Team" />;
   const query = await searchParams;
   const editing = data.users.find((person) => person.id === query.edit);
   const manage = can(user, "team.manage");

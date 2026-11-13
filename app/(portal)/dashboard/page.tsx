@@ -1,4 +1,4 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import { Badge, PageHeader, Stat } from "@/components/common/ui";
 import { ResourceAllocation } from "@/components/dashboard/resource-allocation";
 import { HourlyTracker } from "@/components/sheets/hourly-tracker";
