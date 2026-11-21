@@ -124,7 +124,7 @@ export async function saveAvatarAction(_prev: FormState, form: FormData) {
 
 export async function signOutAction() {
   await signOut();
-  redirect("/login");
+  redirect("/");
 }
 
 export async function saveClientAction(_prev: FormState, form: FormData) {

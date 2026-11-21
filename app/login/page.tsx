@@ -1,9 +1,10 @@
+import Link from "next/link";
 import { loginAction } from "@/app/actions";
 import { Logo } from "@/components/brand/logo";
 import { ActionForm, Submit } from "@/components/common/forms";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { isSupabaseConfigured } from "@/lib/env";
- 
+
 const ACCOUNTS = [
   { preset: "director", role: "Director / Super admin", email: "director@embee.local", note: "Harshit Bansal" },
   { preset: "owner", role: "Admin", email: "owner@embee.local", note: "GSVK SAI" },
@@ -19,13 +20,13 @@ export default function LoginPage() {
   const demo = !isSupabaseConfigured();
   return (
     <div className="login">
-      <section className="poster" aria-label="Embee">
+      <section className="poster" aria-label="Embee Finsoft">
         <div className="poster-brand">
           <Logo />
-          <span>VP Portal</span>
+          <span>Embee Finsoft</span>
         </div>
         <div className="poster-copy">
-          <p className="eyebrow">Embee</p>
+          <p className="eyebrow">Embee Finsoft</p>
           <h1>Project delivery and operations</h1>
           <p>Intake, delivery, time, and billing for your organization.</p>
         </div>
@@ -40,7 +41,7 @@ export default function LoginPage() {
         <ActionForm action={loginAction} className="login-form">
           <div>
             <p className="eyebrow">Sign in</p>
-            <h2>Welcome back</h2>
+            <h2>Embee Finsoft</h2>
             <p className="lede">Sign in with your work email.</p>
           </div>
           <label className="field">
@@ -64,6 +65,9 @@ export default function LoginPage() {
               </button>
             ))}
           </div>
+          <p className="muted">
+            <Link href="/">Back to organization picker</Link>
+          </p>
         </ActionForm>
       </section>
     </div>

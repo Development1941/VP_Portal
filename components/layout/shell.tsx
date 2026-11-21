@@ -36,7 +36,7 @@ export function Shell({
       <Sidebar>
         <div className="brand">
           <Logo />
-          <span>VP Portal</span>
+          <span>Embee Finsoft</span>
         </div>
         <SideNav links={links} className="nav" />
       </Sidebar>

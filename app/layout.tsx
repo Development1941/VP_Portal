@@ -9,8 +9,8 @@ const sans = Outfit({ subsets: ["latin"], display: "swap", variable: "--font-san
 const themeBoot = `(function(){try{var t=localStorage.getItem("vp-theme");if(t==="dark"||t==="light")document.documentElement.dataset.theme=t;}catch(e){}})();`;
 
 export const metadata: Metadata = {
-  title: "Embee VP Portal",
-  description: "Project tracking, timesheets, billing, and payments for Embee.",
+  title: "Embee Project Workspaces",
+  description: "Embee Finance and Embee Finsoft project management workspaces.",
   icons: {
     icon: [
       { url: "/icon-32.png", sizes: "32x32", type: "image/png" },
