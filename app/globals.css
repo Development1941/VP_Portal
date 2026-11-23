@@ -818,6 +818,16 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(139, 26, 26,
   border: 1px solid #e6d9a8;
 }
 .finance-intake h4 { margin: 12px 0 6px; font-size: 0.98rem; }
+.capacity-grid { display: grid; gap: 10px; }
+.capacity-grid table { width: 100%; border-collapse: collapse; }
+.capacity-grid th,
+.capacity-grid td { padding: 6px 8px; vertical-align: middle; }
+.capacity-grid input,
+.capacity-grid select { width: 100%; }
+.capacity-grid .btn.compact { padding: 6px 10px; font-size: 12px; }
+.company-fetch-panel { display: grid; gap: 10px; }
+.company-fetch-action { align-content: end; }
+.form-error { margin: 0; color: #9b1c1c; font-size: 13px; }
 .org-landing {
   min-height: 100vh;
   min-height: 100dvh;

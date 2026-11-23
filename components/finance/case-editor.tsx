@@ -1,8 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { ActionForm, Submit } from "@/components/common/forms";
+import { CapacityGrid } from "@/components/finance/capacity-grid";
+import { CompanyFetchPanel } from "@/components/finance/company-fetch-panel";
+import { normalizeCapacityRows } from "@/lib/finance/capacity";
+import type { CompanyLookupHit } from "@/lib/finance/company-fetch";
 import { CASE_STATUSES, CONSTITUTIONS, MANDATE_STATUSES, TERM_LOAN_FIELDS } from "@/lib/finance/case-types";
-import type { FinanceCase, FinanceCompany } from "@/lib/finance/types";
+import type { FinanceCapacityRow, FinanceCase, FinanceCompany } from "@/lib/finance/types";
 import type { FormState } from "@/lib/form";
 
 export function FinanceCaseEditor({
@@ -22,21 +27,66 @@ export function FinanceCaseEditor({
   adminControls?: boolean;
   showMandate: boolean;
 }) {
+  const [companyName, setCompanyName] = useState(company.name);
+  const [constitution, setConstitution] = useState(company.constitution || "Private Limited");
+  const [cin, setCin] = useState(company.cin);
+  const [pan, setPan] = useState(company.pan);
+  const [incorporationYear, setIncorporationYear] = useState(company.incorporationYear);
+  const [locations, setLocations] = useState(company.locations);
+  const [businessDescription, setBusinessDescription] = useState(company.businessDescription);
+  const [keyClients, setKeyClients] = useState(company.keyClients);
+  const [capacityRows, setCapacityRows] = useState<FinanceCapacityRow[]>(() => normalizeCapacityRows(company.capacityRows));
+
+  function applyLookup(hit: CompanyLookupHit) {
+    if (hit.name) setCompanyName(hit.name);
+    if (hit.constitution) setConstitution(hit.constitution);
+    if (hit.cin) setCin(hit.cin);
+    if (hit.pan) setPan(hit.pan);
+    if (hit.incorporationYear) setIncorporationYear(hit.incorporationYear);
+    if (hit.locations) setLocations(hit.locations);
+    if (hit.businessDescription) setBusinessDescription(hit.businessDescription);
+    if (hit.keyClients) setKeyClients(hit.keyClients);
+    if (hit.capacityRows?.some((row) => row.product || row.capacity)) {
+      setCapacityRows(
+        hit.capacityRows.map((row, index) => ({
+          id: `cap_fetch_${index}`,
+          product: row.product || "",
+          capacity: row.capacity || "",
+          unit: row.unit || "MT",
+        })),
+      );
+    }
+  }
+
   return (
     <div className="finance-case-stack">
       <ActionForm action={action} className="card finance-intake">
         <input type="hidden" name="caseId" value={financeCase.id} />
+
+        {adminControls ? (
+          <section className="form-section">
+            <h3>Fetch from online sources</h3>
+            <CompanyFetchPanel companyName={companyName} cin={cin} onApply={applyLookup} />
+          </section>
+        ) : null}
+
         <section className="form-section">
           <h3>Company</h3>
           <div className="form-grid">
             <label className="field">
               <span>Company name</span>
-              <input name="companyName" defaultValue={company.name} required readOnly={!adminControls} />
+              <input
+                name="companyName"
+                value={companyName}
+                onChange={(event) => setCompanyName(event.target.value)}
+                required
+                readOnly={!adminControls}
+              />
             </label>
             <label className="field">
               <span>Constitution</span>
               {adminControls ? (
-                <select name="constitution" defaultValue={company.constitution || "Private Limited"}>
+                <select name="constitution" value={constitution} onChange={(event) => setConstitution(event.target.value)}>
                   {CONSTITUTIONS.map((item) => (
                     <option key={item} value={item}>
                       {item}
@@ -45,44 +95,58 @@ export function FinanceCaseEditor({
                 </select>
               ) : (
                 <>
-                  <input value={company.constitution || "Private Limited"} readOnly />
-                  <input type="hidden" name="constitution" value={company.constitution || "Private Limited"} />
+                  <input value={constitution} readOnly />
+                  <input type="hidden" name="constitution" value={constitution} />
                 </>
               )}
             </label>
             <label className="field">
               <span>CIN</span>
-              <input name="cin" defaultValue={company.cin} />
+              <input name="cin" value={cin} onChange={(event) => setCin(event.target.value)} readOnly={!teamEditable} />
             </label>
             <label className="field">
               <span>PAN</span>
-              <input name="pan" defaultValue={company.pan} />
+              <input name="pan" value={pan} onChange={(event) => setPan(event.target.value)} readOnly={!teamEditable} />
             </label>
             <label className="field">
               <span>Incorporation year</span>
-              <input name="incorporationYear" defaultValue={company.incorporationYear} />
+              <input
+                name="incorporationYear"
+                value={incorporationYear}
+                onChange={(event) => setIncorporationYear(event.target.value)}
+                readOnly={!teamEditable}
+              />
             </label>
             <label className="field">
               <span>Locations</span>
-              <input name="locations" defaultValue={company.locations} />
+              <input name="locations" value={locations} onChange={(event) => setLocations(event.target.value)} readOnly={!teamEditable} />
             </label>
             <label className="field wide">
               <span>Business description</span>
-              <textarea name="businessDescription" rows={3} defaultValue={company.businessDescription} />
-            </label>
-            <label className="field">
-              <span>Capacities</span>
-              <input name="capacities" defaultValue={company.capacities} />
-            </label>
-            <label className="field">
-              <span>Products</span>
-              <input name="products" defaultValue={company.products} />
+              <textarea
+                name="businessDescription"
+                rows={3}
+                value={businessDescription}
+                onChange={(event) => setBusinessDescription(event.target.value)}
+                readOnly={!teamEditable}
+              />
             </label>
             <label className="field wide">
               <span>Key clients</span>
-              <input name="keyClients" defaultValue={company.keyClients} />
+              <input name="keyClients" value={keyClients} onChange={(event) => setKeyClients(event.target.value)} readOnly={!teamEditable} />
             </label>
           </div>
+        </section>
+
+        <section className="form-section">
+          <h3>Capacity</h3>
+          <p className="muted">One row per product with capacity and unit. Admin can add more product rows.</p>
+          <CapacityGrid
+            rows={capacityRows}
+            onChange={setCapacityRows}
+            canAddRows={adminControls}
+            readOnly={!teamEditable}
+          />
         </section>
 
         <section className="form-section">

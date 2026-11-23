@@ -110,8 +110,12 @@ const companies: FinanceCompany[] = [
     incorporationYear: "",
     locations: "Mumbai",
     businessDescription: "IPO-bound healthcare company. Intake opened from Aug 2025 status.",
-    capacities: "",
-    products: "",
+    capacities: "OPD consultations · 120000 · Units / year; Inpatient beds · 180 · Beds",
+    products: "OPD consultations, Inpatient beds",
+    capacityRows: [
+      { id: "fin_cap_l1", product: "OPD consultations", capacity: "120000", unit: "Units / year" },
+      { id: "fin_cap_l2", product: "Inpatient beds", capacity: "180", unit: "Beds" },
+    ],
     keyClients: "",
     people: [
       { id: "fin_p_lifeline_1", name: "Nikhil Mehta", role: "Promoter", profile: "", shareholdingPct: "" },
@@ -133,8 +137,12 @@ const companies: FinanceCompany[] = [
     incorporationYear: "",
     locations: "",
     businessDescription: "Green energy unit. HDFC / co-operative bank login in progress.",
-    capacities: "",
-    products: "",
+    capacities: "Solar generation · 25 · MW; Biomass processing · 40000 · MTPA",
+    products: "Solar generation, Biomass processing",
+    capacityRows: [
+      { id: "fin_cap_j1", product: "Solar generation", capacity: "25", unit: "MW" },
+      { id: "fin_cap_j2", product: "Biomass processing", capacity: "40000", unit: "MTPA" },
+    ],
     keyClients: "",
     people: [{ id: "fin_p_jija_1", name: "Ravi Patil", role: "Promoter", profile: "", shareholdingPct: "" }],
     financialYears: [

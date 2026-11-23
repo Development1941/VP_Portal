@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { canUploadFinanceSheet, homePathFor, isFinanceAdmin } from "@/lib/finance/access";
+import { capacityRowsFromForm, summarizeCapacityRows } from "@/lib/finance/capacity";
 import { TERM_LOAN_FIELDS } from "@/lib/finance/case-types";
 import { getFinanceSession, financeSignIn, financeSignOut } from "@/lib/finance/session";
 import { parseFinanceSheet } from "@/lib/finance/sheet";
@@ -104,6 +105,8 @@ export async function submitFinanceIntakeAction(_prev: FormState, form: FormData
   const user = await getFinanceSession();
   if (!user) return { error: "Your session expired. Sign in again." };
   try {
+    const capacityRows = capacityRowsFromForm(form);
+    const capacitySummary = summarizeCapacityRows(capacityRows);
     const financeCase = createFinanceIntake(user, {
       companyName: str(form, "companyName"),
       constitution: str(form, "constitution"),
@@ -112,8 +115,9 @@ export async function submitFinanceIntakeAction(_prev: FormState, form: FormData
       incorporationYear: str(form, "incorporationYear"),
       locations: str(form, "locations"),
       businessDescription: str(form, "businessDescription"),
-      capacities: str(form, "capacities"),
-      products: str(form, "products"),
+      capacities: capacitySummary.capacities,
+      products: capacitySummary.products,
+      capacityRows,
       keyClients: str(form, "keyClients"),
       caseCategory: str(form, "caseCategory"),
       caseType: str(form, "caseType"),
@@ -144,6 +148,8 @@ export async function saveFinanceCaseAction(_prev: FormState, form: FormData): P
   if (!user) return { error: "Your session expired. Sign in again." };
   const caseId = str(form, "caseId");
   try {
+    const capacityRows = capacityRowsFromForm(form);
+    const capacitySummary = summarizeCapacityRows(capacityRows);
     updateFinanceCase(user, caseId, {
       requirementText: str(form, "requirementText"),
       amountSought: str(form, "amountSought"),
@@ -159,8 +165,9 @@ export async function saveFinanceCaseAction(_prev: FormState, form: FormData): P
         incorporationYear: str(form, "incorporationYear"),
         locations: str(form, "locations"),
         businessDescription: str(form, "businessDescription"),
-        capacities: str(form, "capacities"),
-        products: str(form, "products"),
+        capacities: capacitySummary.capacities,
+        products: capacitySummary.products,
+        capacityRows,
         keyClients: str(form, "keyClients"),
       },
     });

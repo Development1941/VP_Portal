@@ -2,9 +2,37 @@
 
 import { useMemo, useState } from "react";
 import { ActionForm, Submit } from "@/components/common/forms";
+import { CapacityGrid } from "@/components/finance/capacity-grid";
+import { CompanyFetchPanel } from "@/components/finance/company-fetch-panel";
+import { emptyCapacityRow } from "@/lib/finance/capacity";
+import type { CompanyLookupHit } from "@/lib/finance/company-fetch";
 import { CASE_CATEGORIES, CONSTITUTIONS, TERM_LOAN_FIELDS, typesForCategory } from "@/lib/finance/case-types";
-import type { FinanceSessionUser } from "@/lib/finance/types";
+import type { FinanceCapacityRow, FinanceSessionUser } from "@/lib/finance/types";
 import type { FormState } from "@/lib/form";
+
+type CompanyDraft = {
+  companyName: string;
+  constitution: string;
+  cin: string;
+  pan: string;
+  incorporationYear: string;
+  locations: string;
+  businessDescription: string;
+  keyClients: string;
+  promoterName: string;
+};
+
+const emptyCompany = (): CompanyDraft => ({
+  companyName: "",
+  constitution: "Private Limited",
+  cin: "",
+  pan: "",
+  incorporationYear: "",
+  locations: "",
+  businessDescription: "",
+  keyClients: "",
+  promoterName: "",
+});
 
 export function FinanceIntakeForm({
   action,
@@ -24,11 +52,42 @@ export function FinanceIntakeForm({
   const [category, setCategory] = useState<string>("Debt");
   const subtypes = useMemo(() => typesForCategory(category), [category]);
   const [caseType, setCaseType] = useState<string>(subtypes[0] || "Term Loan");
+  const [company, setCompany] = useState<CompanyDraft>(emptyCompany);
+  const [capacityRows, setCapacityRows] = useState<FinanceCapacityRow[]>([emptyCapacityRow()]);
 
   function onCategoryChange(value: string) {
     setCategory(value);
     const next = typesForCategory(value);
     setCaseType(next[0] || "Not defined yet");
+  }
+
+  function patchCompany<K extends keyof CompanyDraft>(key: K, value: CompanyDraft[K]) {
+    setCompany((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function applyLookup(hit: CompanyLookupHit) {
+    setCompany((prev) => ({
+      ...prev,
+      companyName: hit.name || prev.companyName,
+      constitution: hit.constitution || prev.constitution,
+      cin: hit.cin || prev.cin,
+      pan: hit.pan || prev.pan,
+      incorporationYear: hit.incorporationYear || prev.incorporationYear,
+      locations: hit.locations || prev.locations,
+      businessDescription: hit.businessDescription || prev.businessDescription,
+      keyClients: hit.keyClients || prev.keyClients,
+      promoterName: hit.people[0]?.name || prev.promoterName,
+    }));
+    if (hit.capacityRows?.some((row) => row.product || row.capacity)) {
+      setCapacityRows(
+        hit.capacityRows.map((row, index) => ({
+          id: `cap_fetch_${index}`,
+          product: row.product || "",
+          capacity: row.capacity || "",
+          unit: row.unit || "MT",
+        })),
+      );
+    }
   }
 
   return (
@@ -38,7 +97,15 @@ export function FinanceIntakeForm({
         <div className="form-grid">
           <label className="field">
             <span>Client name</span>
-            <input name="companyName" list="finance-client-names" required placeholder="Type client / company name" autoComplete="off" />
+            <input
+              name="companyName"
+              list="finance-client-names"
+              required
+              placeholder="Type client / company name"
+              autoComplete="off"
+              value={company.companyName}
+              onChange={(event) => patchCompany("companyName", event.target.value)}
+            />
             <datalist id="finance-client-names">
               {clientNames.map((name) => (
                 <option key={name} value={name} />
@@ -90,11 +157,16 @@ export function FinanceIntakeForm({
       </section>
 
       <section className="form-section">
+        <h3>Fetch from online sources</h3>
+        <CompanyFetchPanel companyName={company.companyName} cin={company.cin} onApply={applyLookup} />
+      </section>
+
+      <section className="form-section">
         <h3>Company</h3>
         <div className="form-grid">
           <label className="field">
             <span>Constitution</span>
-            <select name="constitution" defaultValue="Private Limited">
+            <select name="constitution" value={company.constitution} onChange={(event) => patchCompany("constitution", event.target.value)}>
               {CONSTITUTIONS.map((item) => (
                 <option key={item} value={item}>
                   {item}
@@ -104,41 +176,49 @@ export function FinanceIntakeForm({
           </label>
           <label className="field">
             <span>CIN</span>
-            <input name="cin" />
+            <input name="cin" value={company.cin} onChange={(event) => patchCompany("cin", event.target.value)} />
           </label>
           <label className="field">
             <span>PAN</span>
-            <input name="pan" />
+            <input name="pan" value={company.pan} onChange={(event) => patchCompany("pan", event.target.value)} />
           </label>
           <label className="field">
             <span>Incorporation year</span>
-            <input name="incorporationYear" placeholder="YYYY" />
+            <input
+              name="incorporationYear"
+              placeholder="YYYY"
+              value={company.incorporationYear}
+              onChange={(event) => patchCompany("incorporationYear", event.target.value)}
+            />
           </label>
           <label className="field">
             <span>Locations</span>
-            <input name="locations" />
+            <input name="locations" value={company.locations} onChange={(event) => patchCompany("locations", event.target.value)} />
           </label>
           <label className="field">
             <span>Promoter name</span>
-            <input name="promoterName" />
+            <input name="promoterName" value={company.promoterName} onChange={(event) => patchCompany("promoterName", event.target.value)} />
           </label>
           <label className="field wide">
             <span>Business description</span>
-            <textarea name="businessDescription" rows={3} />
-          </label>
-          <label className="field">
-            <span>Capacities</span>
-            <input name="capacities" />
-          </label>
-          <label className="field">
-            <span>Products</span>
-            <input name="products" />
+            <textarea
+              name="businessDescription"
+              rows={3}
+              value={company.businessDescription}
+              onChange={(event) => patchCompany("businessDescription", event.target.value)}
+            />
           </label>
           <label className="field wide">
             <span>Key clients</span>
-            <input name="keyClients" />
+            <input name="keyClients" value={company.keyClients} onChange={(event) => patchCompany("keyClients", event.target.value)} />
           </label>
         </div>
+      </section>
+
+      <section className="form-section">
+        <h3>Capacity</h3>
+        <p className="muted">One row per product. Admin can add more product rows.</p>
+        <CapacityGrid rows={capacityRows} onChange={setCapacityRows} canAddRows />
       </section>
 
       <section className="form-section">

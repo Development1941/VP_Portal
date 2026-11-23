@@ -84,6 +84,14 @@ export type FinanceFacility = {
   personalGuarantor: string;
 };
 
+/** Access-matrix Capacity grid: one row per product. */
+export type FinanceCapacityRow = {
+  id: string;
+  product: string;
+  capacity: string;
+  unit: string;
+};
+
 export type FinanceCompany = {
   id: string;
   name: string;
@@ -93,8 +101,11 @@ export type FinanceCompany = {
   incorporationYear: string;
   locations: string;
   businessDescription: string;
+  /** Legacy free-text summary; kept in sync from capacityRows. */
   capacities: string;
+  /** Legacy free-text summary; kept in sync from capacityRows. */
   products: string;
+  capacityRows: FinanceCapacityRow[];
   keyClients: string;
   people: FinancePerson[];
   financialYears: FinanceFinancialYear[];

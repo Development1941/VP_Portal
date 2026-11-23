@@ -20,9 +20,11 @@ import {
   normalizeLegacyCaseType,
   TERM_LOAN_FIELDS,
 } from "@/lib/finance/case-types";
+import { capacityRowsFromLegacy, normalizeCapacityRows, summarizeCapacityRows } from "@/lib/finance/capacity";
 import { buildFinanceSeed } from "@/lib/finance/seed";
 import type {
   CaseCategory,
+  FinanceCapacityRow,
   FinanceCase,
   FinanceCompany,
   FinanceFacility,
@@ -146,12 +148,25 @@ function hydrate(store: FinanceStore): { store: FinanceStore; dirty: boolean } {
     store.tasks = seed.tasks;
     dirty = true;
   }
-  store.companies = (store.companies ?? []).map((company) => ({
-    ...company,
-    people: company.people ?? [],
-    financialYears: company.financialYears ?? [],
-    facilities: company.facilities ?? [],
-  }));
+  store.companies = (store.companies ?? []).map((company) => {
+    const next = {
+      ...company,
+      people: company.people ?? [],
+      financialYears: company.financialYears ?? [],
+      facilities: company.facilities ?? [],
+      capacityRows: company.capacityRows,
+    };
+    if (!next.capacityRows?.length) {
+      next.capacityRows = capacityRowsFromLegacy(next.products || "", next.capacities || "");
+      const summary = summarizeCapacityRows(next.capacityRows);
+      if (!next.products) next.products = summary.products;
+      if (!next.capacities) next.capacities = summary.capacities;
+      dirty = true;
+    } else {
+      next.capacityRows = normalizeCapacityRows(next.capacityRows);
+    }
+    return next;
+  });
   store.cases = (store.cases ?? []).map((item) => {
     if (migrateCase(item, seed.cases)) dirty = true;
     return item;
@@ -268,6 +283,7 @@ export type IntakeInput = {
   businessDescription: string;
   capacities: string;
   products: string;
+  capacityRows: FinanceCapacityRow[];
   keyClients: string;
   caseCategory: string;
   caseType: string;
@@ -336,6 +352,12 @@ export function createFinanceIntake(user: FinanceSessionUser, input: IntakeInput
     .filter((item) => item.lender.trim() || item.facilityType.trim())
     .map((item) => ({ id: nid("fin_fac"), ...item }));
 
+  const capacityRows = normalizeCapacityRows(input.capacityRows).map((row) => ({
+    ...row,
+    id: row.id.startsWith("cap_") ? row.id : nid("fin_cap"),
+  }));
+  const capacitySummary = summarizeCapacityRows(capacityRows);
+
   if (matched) {
     matched.constitution = input.constitution.trim() || matched.constitution;
     matched.cin = input.cin.trim() || matched.cin;
@@ -343,8 +365,9 @@ export function createFinanceIntake(user: FinanceSessionUser, input: IntakeInput
     matched.incorporationYear = input.incorporationYear.trim() || matched.incorporationYear;
     matched.locations = input.locations.trim() || matched.locations;
     matched.businessDescription = input.businessDescription.trim() || matched.businessDescription;
-    matched.capacities = input.capacities.trim() || matched.capacities;
-    matched.products = input.products.trim() || matched.products;
+    matched.capacityRows = capacityRows;
+    matched.capacities = capacitySummary.capacities || input.capacities.trim() || matched.capacities;
+    matched.products = capacitySummary.products || input.products.trim() || matched.products;
     matched.keyClients = input.keyClients.trim() || matched.keyClients;
     if (input.promoterName.trim() && !matched.people.some((person) => person.name === input.promoterName.trim())) {
       matched.people.push({ id: nid("fin_p"), name: input.promoterName.trim(), role: "Promoter", profile: "", shareholdingPct: "" });
@@ -363,8 +386,9 @@ export function createFinanceIntake(user: FinanceSessionUser, input: IntakeInput
       incorporationYear: input.incorporationYear.trim(),
       locations: input.locations.trim(),
       businessDescription: input.businessDescription.trim(),
-      capacities: input.capacities.trim(),
-      products: input.products.trim(),
+      capacities: capacitySummary.capacities || input.capacities.trim(),
+      products: capacitySummary.products || input.products.trim(),
+      capacityRows,
       keyClients: input.keyClients.trim(),
       people: input.promoterName.trim()
         ? [{ id: nid("fin_p"), name: input.promoterName.trim(), role: "Promoter", profile: "", shareholdingPct: "" }]
@@ -503,8 +527,15 @@ export function updateFinanceCase(
       if (patch.company.incorporationYear != null) company.incorporationYear = patch.company.incorporationYear.trim();
       if (patch.company.locations != null) company.locations = patch.company.locations.trim();
       if (patch.company.businessDescription != null) company.businessDescription = patch.company.businessDescription.trim();
-      if (patch.company.capacities != null) company.capacities = patch.company.capacities.trim();
-      if (patch.company.products != null) company.products = patch.company.products.trim();
+      if (patch.company.capacityRows) {
+        company.capacityRows = normalizeCapacityRows(patch.company.capacityRows);
+        const summary = summarizeCapacityRows(company.capacityRows);
+        company.products = summary.products;
+        company.capacities = summary.capacities;
+      } else {
+        if (patch.company.capacities != null) company.capacities = patch.company.capacities.trim();
+        if (patch.company.products != null) company.products = patch.company.products.trim();
+      }
       if (patch.company.keyClients != null) company.keyClients = patch.company.keyClients.trim();
     }
   }
