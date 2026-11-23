@@ -1,5 +1,3 @@
-import fs from "fs";
-import path from "path";
 import {
   canAllotCases,
   canCreateCase,
@@ -36,21 +34,18 @@ import type {
   MandateStatus,
 } from "@/lib/finance/types";
 import { PortalError } from "@/lib/form";
+import { localDataFile, readLocalJson, writeLocalJson } from "@/lib/local-data";
 
-const filePath = path.join(process.cwd(), ".data", "finance-store.json");
-
-function ensureDir() {
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
+const filePath = localDataFile("finance-store.json");
+let memoryStore: FinanceStore | null = null;
 
 function nid(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function write(store: FinanceStore) {
-  ensureDir();
-  fs.writeFileSync(filePath, JSON.stringify(store, null, 2), "utf8");
+  memoryStore = store;
+  writeLocalJson(filePath, store);
 }
 
 function migrateUser(user: FinanceStore["users"][number]) {
@@ -176,19 +171,24 @@ function hydrate(store: FinanceStore): { store: FinanceStore; dirty: boolean } {
 }
 
 function read(): FinanceStore {
-  if (!fs.existsSync(filePath)) {
+  if (memoryStore) return memoryStore;
+
+  const parsed = readLocalJson<FinanceStore>(filePath);
+  if (!parsed?.users?.length) {
     const seed = buildFinanceSeed();
     write(seed);
     return seed;
   }
+
   try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as FinanceStore;
-    if (!parsed.users?.length) return buildFinanceSeed();
     const { store, dirty } = hydrate(parsed);
     if (dirty) write(store);
+    else memoryStore = store;
     return store;
   } catch {
-    return buildFinanceSeed();
+    const seed = buildFinanceSeed();
+    write(seed);
+    return seed;
   }
 }
 

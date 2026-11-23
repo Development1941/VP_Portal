@@ -1,5 +1,3 @@
-import fs from "fs";
-import path from "path";
 import { can, canApproveProject, canEditDelivery, canEditTask, canFileIntake, canManageProject, canSeeMilestones, canSeeTeamDsr, canUploadMilestones, projectLeads, projectVisible } from "@/lib/access";
 import { assertIntake, billingModelFor, clientForProfile, defaultWorkstreams, isIntakeOwner, keepDelivery, sowDefaults, statusForDelivery, type IntakeRequest } from "@/lib/delivery";
 import { ALL_PERMISSIONS, ROLE_PRESETS, type PermissionKey } from "@/lib/permissions";
@@ -50,32 +48,37 @@ import { latestStatus, presentStatus, statusIdentity, visibleStatus } from "@/li
 import { DEFAULT_SOW } from "@/lib/demo/sow-board";
 import { presentSow } from "@/lib/sow-board";
 import { buildSeed, type DemoStore, type DemoUser } from "@/lib/demo/seed";
+import { localDataFile, readLocalJson, writeLocalJson } from "@/lib/local-data";
+import fs from "fs";
 
-const filePath = path.join(process.cwd(), ".data", "store.json");
+const filePath = localDataFile("store.json");
 let queue: Promise<unknown> = Promise.resolve();
 let fileCache: { stamp: string; store: DemoStore } | null = null;
+let memoryStore: DemoStore | null = null;
 
 export function storeStamp() {
   try {
     const stat = fs.statSync(filePath);
     return `${stat.mtimeMs}:${stat.size}`;
   } catch {
-    return "missing";
+    return memoryStore ? "memory" : "missing";
   }
 }
 
 function read(): DemoStore {
-  if (!fs.existsSync(filePath)) {
+  if (memoryStore && !fileCache) return memoryStore;
+  const stamp = storeStamp();
+  if (fileCache?.stamp === stamp) return fileCache.store;
+
+  const parsed = readLocalJson<DemoStore>(filePath);
+  if (!parsed?.users || !parsed.roles) {
     const seed = buildSeed();
     write(seed);
     return seed;
   }
-  const stamp = storeStamp();
-  if (fileCache?.stamp === stamp) return fileCache.store;
-  const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as DemoStore;
-  if (!parsed.users || !parsed.roles) return buildSeed();
   const store = hydrate(parsed);
   fileCache = { stamp: storeStamp(), store };
+  memoryStore = store;
   return store;
 }
 
@@ -256,10 +259,8 @@ function studioCurrency(store: DemoStore) {
 }
 
 function write(store: DemoStore) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const temp = `${filePath}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(store, null, 2));
-  fs.renameSync(temp, filePath);
+  memoryStore = store;
+  writeLocalJson(filePath, store);
   fileCache = { stamp: storeStamp(), store };
   invalidatePortalCache();
 }
