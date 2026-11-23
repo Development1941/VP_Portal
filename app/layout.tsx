@@ -1,10 +1,7 @@
 import type { Metadata, Viewport } from "next";
-import { Outfit } from "next/font/google";
 import { Intro } from "@/components/brand/intro";
 import { Toaster } from "@/components/toast";
 import "./globals.css";
-
-const sans = Outfit({ subsets: ["latin"], display: "swap", variable: "--font-sans" });
 
 const themeBoot = `(function(){try{var t=localStorage.getItem("vp-theme");if(t==="dark"||t==="light")document.documentElement.dataset.theme=t;}catch(e){}})();`;
 
@@ -32,7 +29,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeBoot }} />
       </head>
-      <body className={sans.variable}>
+      <body>
         <Intro />
         {children}
         <Toaster />

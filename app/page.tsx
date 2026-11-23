@@ -34,6 +34,9 @@ export default function Home() {
           <p className="eyebrow">Choose organization</p>
           <h1>Embee project workspaces</h1>
           <p className="lede">Pick Embee Finance or Embee Finsoft to open the matching sign-in page.</p>
+          <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+            Build {process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || "local"} · open /api/version to verify deploy
+          </p>
         </div>
         <div className="org-grid">
           {ORGS.map((org) => (

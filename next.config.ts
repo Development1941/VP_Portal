@@ -23,13 +23,12 @@ const nextConfig: NextConfig = {
     return config;
   },
   experimental: {
-    devtoolSegmentExplorer: false,
     optimizePackageImports: ["lucide-react"],
     serverActions: { bodySizeLimit: "4mb" },
   },
   images: {
     remotePatterns: [
-      { protocol: "https", hostname: "*.supabase.co", pathname: "/storage/v1/object/public/**" },
+      { protocol: "https", hostname: "**.supabase.co", pathname: "/storage/v1/object/public/**" },
     ],
   },
 };
